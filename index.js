@@ -65,7 +65,6 @@ async function updateMemberCounter(guild) {
         const cooldown = 5 * 60 * 1000; // Cooldown de 5 minutos (Discord limita renomeação de canais a 2 vezes por 10 min)
 
         if (now - lastCounterUpdate < cooldown) {
-          // Se já houver um agendamento pendente, ignora este para evitar acúmulo
           if (!pendingCounterUpdate) {
             console.log(`[Counter] Atualização rápida detectada. Agendando atualização do contador para daqui a ${Math.round((cooldown - (now - lastCounterUpdate)) / 1000)}s...`);
             pendingCounterUpdate = setTimeout(async () => {
@@ -138,26 +137,34 @@ async function setupServerRoles() {
 
     console.log('[Roles] Verificando e configurando cargos...');
 
-    // 1. Verificar/Criar cargo "Membros" (Roxo)
+    // 1. Verificar/Criar cargo "Membros" (Roxo) e garantir que esteja destacado (hoist)
     let roleMembros = guild.roles.cache.find(r => r.name === 'Membros');
     if (!roleMembros) {
       roleMembros = await guild.roles.create({
         name: 'Membros',
         color: '#9B59B6', // Roxo
+        hoist: true, // Exibir separadamente dos membros online na lista
         reason: 'Cargo inicial criado pelo bot'
       });
-      console.log('[Roles] Cargo "Membros" criado.');
+      console.log('[Roles] Cargo "Membros" criado com destaque.');
+    } else if (!roleMembros.hoist) {
+      await roleMembros.edit({ hoist: true });
+      console.log('[Roles] Cargo "Membros" atualizado para ser exibido separadamente (hoist).');
     }
 
-    // 2. Verificar/Criar cargo "Penguin Supremo" (Amarelo)
+    // 2. Verificar/Criar cargo "Penguin Supremo" (Amarelo) e garantir que esteja destacado (hoist)
     let rolePenguin = guild.roles.cache.find(r => r.name === 'Penguin Supremo');
     if (!rolePenguin) {
       rolePenguin = await guild.roles.create({
         name: 'Penguin Supremo',
         color: '#F1C40F', // Amarelo
+        hoist: true, // Exibir separadamente dos membros online na lista
         reason: 'Cargo especial criado pelo bot'
       });
-      console.log('[Roles] Cargo "Penguin Supremo" criado.');
+      console.log('[Roles] Cargo "Penguin Supremo" criado com destaque.');
+    } else if (!rolePenguin.hoist) {
+      await rolePenguin.edit({ hoist: true });
+      console.log('[Roles] Cargo "Penguin Supremo" atualizado para ser exibido separadamente (hoist).');
     }
 
     // 3. Atribuir cargo "Membros" para todos que já estão no servidor e ainda não possuem
