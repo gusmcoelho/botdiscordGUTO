@@ -29,7 +29,7 @@ if (!DISCORD_TOKEN) {
   process.exit(1);
 }
 
-// Inicializa o cliente do Discord (Guilds para interações, GuildMembers para cargos e eventos de novos membros)
+// Inicializa o cliente do Discord (Guilds, GuildMembers para cargos e eventos de entrar/sair)
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -37,11 +37,68 @@ const client = new Client({
   ]
 });
 
+// Variáveis de controle de throttling para o contador de membros (evita rate limits do Discord)
+let lastCounterUpdate = 0;
+let pendingCounterUpdate = null;
+
 // Função geradora de chaves de teste (Formato: GUTO-5MIN-XXXXXX)
 function generateTrialKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   const randomPart = Array.from({ length: 6 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
   return `GUTO-5MIN-${randomPart}`;
+}
+
+// Função para atualizar o contador de membros (como uma categoria no topo do servidor)
+async function updateMemberCounter(guild) {
+  try {
+    const memberCount = guild.memberCount;
+    const categoryName = `─── 👥 ${memberCount} MEMBROS ───`;
+
+    // Localizar se já existe uma categoria de contador
+    let counterCategory = guild.channels.cache.find(
+      (c) => c.type === ChannelType.GuildCategory && (c.name.startsWith('─── 👥') || c.name.endsWith('MEMBROS ───'))
+    );
+
+    if (counterCategory) {
+      if (counterCategory.name !== categoryName) {
+        const now = Date.now();
+        const cooldown = 5 * 60 * 1000; // Cooldown de 5 minutos (Discord limita renomeação de canais a 2 vezes por 10 min)
+
+        if (now - lastCounterUpdate < cooldown) {
+          // Se já houver um agendamento pendente, ignora este para evitar acúmulo
+          if (!pendingCounterUpdate) {
+            console.log(`[Counter] Atualização rápida detectada. Agendando atualização do contador para daqui a ${Math.round((cooldown - (now - lastCounterUpdate)) / 1000)}s...`);
+            pendingCounterUpdate = setTimeout(async () => {
+              pendingCounterUpdate = null;
+              await updateMemberCounter(guild);
+            }, cooldown - (now - lastCounterUpdate));
+          }
+          return;
+        }
+
+        lastCounterUpdate = now;
+        await counterCategory.setName(categoryName);
+        console.log(`[Counter] Nome da categoria atualizado para: ${categoryName}`);
+      }
+    } else {
+      // Cria a categoria no topo do servidor (posição 0)
+      counterCategory = await guild.channels.create({
+        name: categoryName,
+        type: ChannelType.GuildCategory,
+        position: 0,
+        permissionOverwrites: [
+          {
+            id: guild.id, // @everyone (Somente visualização)
+            deny: [PermissionFlagsBits.SendMessages],
+          }
+        ]
+      });
+      lastCounterUpdate = Date.now();
+      console.log(`[Counter] Categoria do contador criada no topo: ${categoryName}`);
+    }
+  } catch (err) {
+    console.error('[Counter] Erro ao atualizar contador de membros:', err);
+  }
 }
 
 // Função para limpar canais antigos (com mais de 4 horas de criação)
@@ -86,7 +143,7 @@ async function setupServerRoles() {
     if (!roleMembros) {
       roleMembros = await guild.roles.create({
         name: 'Membros',
-        color: '#9B59B6', // Roxo (hex padrão discord purple)
+        color: '#9B59B6', // Roxo
         reason: 'Cargo inicial criado pelo bot'
       });
       console.log('[Roles] Cargo "Membros" criado.');
@@ -97,7 +154,7 @@ async function setupServerRoles() {
     if (!rolePenguin) {
       rolePenguin = await guild.roles.create({
         name: 'Penguin Supremo',
-        color: '#F1C40F', // Amarelo (hex padrão gold/yellow)
+        color: '#F1C40F', // Amarelo
         reason: 'Cargo especial criado pelo bot'
       });
       console.log('[Roles] Cargo "Penguin Supremo" criado.');
@@ -109,7 +166,6 @@ async function setupServerRoles() {
     let count = 0;
 
     for (const [id, member] of members) {
-      // Ignorar bots e quem já possui a tag
       if (!member.user.bot && !member.roles.cache.has(roleMembros.id)) {
         await member.roles.add(roleMembros).catch((err) => {
           console.error(`[Roles] Não foi possível dar o cargo a ${member.user.tag}:`, err);
@@ -150,6 +206,9 @@ client.once('ready', async () => {
         // Configurar e atribuir cargos
         await setupServerRoles();
 
+        // Configurar / Atualizar o contador de membros no topo
+        await updateMemberCounter(guild);
+
         // Executar uma limpeza inicial de canais órfãos antigos ao ligar o bot
         await cleanupOldTrialChannels();
 
@@ -170,13 +229,28 @@ client.once('ready', async () => {
 client.on('guildMemberAdd', async (member) => {
   try {
     const guild = member.guild;
+
+    // 1. Dar cargo de Membro
     const roleMembros = guild.roles.cache.find(r => r.name === 'Membros');
     if (roleMembros) {
       await member.roles.add(roleMembros);
       console.log(`[Roles] Novo membro ${member.user.tag} recebeu o cargo "Membros".`);
     }
+
+    // 2. Atualizar o contador de membros
+    await updateMemberCounter(guild);
   } catch (err) {
-    console.error(`[Roles] Erro ao atribuir cargo ao novo membro ${member.user.tag}:`, err);
+    console.error(`[Roles/Counter] Erro no evento guildMemberAdd para ${member.user.tag}:`, err);
+  }
+});
+
+// Evento: Quando um membro sai do servidor
+client.on('guildMemberRemove', async (member) => {
+  try {
+    // Atualizar o contador de membros
+    await updateMemberCounter(member.guild);
+  } catch (err) {
+    console.error(`[Counter] Erro no evento guildMemberRemove para ${member.user.tag}:`, err);
   }
 });
 
