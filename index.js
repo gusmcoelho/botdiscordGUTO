@@ -29,10 +29,11 @@ if (!DISCORD_TOKEN) {
   process.exit(1);
 }
 
-// Inicializa o cliente do Discord (apenas Guilds é necessário para interações)
+// Inicializa o cliente do Discord (Guilds para interações, GuildMembers para cargos e eventos de novos membros)
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
   ]
 });
 
@@ -53,10 +54,9 @@ async function cleanupOldTrialChannels() {
     console.log('[Cleanup] Executando varredura de canais antigos...');
     const channels = await guild.channels.fetch();
     const now = Date.now();
-    const fourHoursMs = 4 * 60 * 60 * 1000; // 4 horas em milissegundos
+    const fourHoursMs = 4 * 60 * 60 * 1000;
 
     for (const [id, channel] of channels) {
-      // Verifica se o canal é de texto e começa com "trial-"
       if (channel && channel.type === ChannelType.GuildText && channel.name.startsWith('trial-')) {
         const age = now - channel.createdTimestamp;
         if (age >= fourHoursMs) {
@@ -72,6 +72,63 @@ async function cleanupOldTrialChannels() {
   }
 }
 
+// Função para criar e atribuir cargos iniciais
+async function setupServerRoles() {
+  if (!DISCORD_GUILD_ID) return;
+  try {
+    const guild = client.guilds.cache.get(DISCORD_GUILD_ID);
+    if (!guild) return;
+
+    console.log('[Roles] Verificando e configurando cargos...');
+
+    // 1. Verificar/Criar cargo "Membros" (Roxo)
+    let roleMembros = guild.roles.cache.find(r => r.name === 'Membros');
+    if (!roleMembros) {
+      roleMembros = await guild.roles.create({
+        name: 'Membros',
+        color: '#9B59B6', // Roxo (hex padrão discord purple)
+        reason: 'Cargo inicial criado pelo bot'
+      });
+      console.log('[Roles] Cargo "Membros" criado.');
+    }
+
+    // 2. Verificar/Criar cargo "Penguin Supremo" (Amarelo)
+    let rolePenguin = guild.roles.cache.find(r => r.name === 'Penguin Supremo');
+    if (!rolePenguin) {
+      rolePenguin = await guild.roles.create({
+        name: 'Penguin Supremo',
+        color: '#F1C40F', // Amarelo (hex padrão gold/yellow)
+        reason: 'Cargo especial criado pelo bot'
+      });
+      console.log('[Roles] Cargo "Penguin Supremo" criado.');
+    }
+
+    // 3. Atribuir cargo "Membros" para todos que já estão no servidor e ainda não possuem
+    console.log('[Roles] Verificando membros existentes para atribuição de tag...');
+    const members = await guild.members.fetch();
+    let count = 0;
+
+    for (const [id, member] of members) {
+      // Ignorar bots e quem já possui a tag
+      if (!member.user.bot && !member.roles.cache.has(roleMembros.id)) {
+        await member.roles.add(roleMembros).catch((err) => {
+          console.error(`[Roles] Não foi possível dar o cargo a ${member.user.tag}:`, err);
+        });
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      console.log(`[Roles] Cargo "Membros" atribuído a ${count} membros existentes.`);
+    } else {
+      console.log('[Roles] Todos os membros atuais já possuem a tag "Membros".');
+    }
+
+  } catch (err) {
+    console.error('[Roles] Erro ao configurar cargos no servidor:', err);
+  }
+}
+
 // Evento: Bot pronto e carregado
 client.once('ready', async () => {
   console.log(`[Bot] Conectado com sucesso como: ${client.user.tag}`);
@@ -81,6 +138,7 @@ client.once('ready', async () => {
     try {
       const guild = client.guilds.cache.get(DISCORD_GUILD_ID);
       if (guild) {
+        // Registrar comandos
         await guild.commands.set([
           {
             name: 'setup-support',
@@ -89,6 +147,9 @@ client.once('ready', async () => {
         ]);
         console.log(`[Bot] Comando /setup-support registrado com sucesso no servidor: ${guild.name}`);
         
+        // Configurar e atribuir cargos
+        await setupServerRoles();
+
         // Executar uma limpeza inicial de canais órfãos antigos ao ligar o bot
         await cleanupOldTrialChannels();
 
@@ -102,6 +163,20 @@ client.once('ready', async () => {
     }
   } else {
     console.warn('[Bot] Aviso: DISCORD_GUILD_ID não está configurado. O comando /setup-support não foi registrado.');
+  }
+});
+
+// Evento: Quando um novo membro entra no servidor
+client.on('guildMemberAdd', async (member) => {
+  try {
+    const guild = member.guild;
+    const roleMembros = guild.roles.cache.find(r => r.name === 'Membros');
+    if (roleMembros) {
+      await member.roles.add(roleMembros);
+      console.log(`[Roles] Novo membro ${member.user.tag} recebeu o cargo "Membros".`);
+    }
+  } catch (err) {
+    console.error(`[Roles] Erro ao atribuir cargo ao novo membro ${member.user.tag}:`, err);
   }
 });
 
