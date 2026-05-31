@@ -167,24 +167,70 @@ async function setupServerRoles() {
       console.log('[Roles] Cargo "Penguin Supremo" atualizado para ser exibido separadamente (hoist).');
     }
 
-    // 3. Atribuir cargo "Membros" para todos que já estão no servidor e ainda não possuem
-    console.log('[Roles] Verificando membros existentes para atribuição de tag...');
-    const members = await guild.members.fetch();
-    let count = 0;
+    // 3. Verificar/Criar cargo "Bots" (Azul) e garantir que esteja destacado (hoist)
+    let roleBots = guild.roles.cache.find(r => r.name === 'Bots');
+    if (!roleBots) {
+      roleBots = await guild.roles.create({
+        name: 'Bots',
+        color: '#3498DB', // Azul (Light Blue padrão Discord)
+        hoist: true,
+        reason: 'Cargo para identificar os bots do servidor'
+      });
+      console.log('[Roles] Cargo "Bots" criado com destaque.');
+    } else if (!roleBots.hoist) {
+      await roleBots.edit({ hoist: true });
+      console.log('[Roles] Cargo "Bots" atualizado para ser exibido separadamente (hoist).');
+    }
 
-    for (const [id, member] of members) {
-      if (!member.user.bot && !member.roles.cache.has(roleMembros.id)) {
-        await member.roles.add(roleMembros).catch((err) => {
-          console.error(`[Roles] Não foi possível dar o cargo a ${member.user.tag}:`, err);
-        });
-        count++;
+    // 4. Garantir programaticamente a ordem correta dos cargos na hierarquia:
+    // Hierarquia pretendida: Penguin Supremo > Membros > Bots
+    if (roleMembros.position <= roleBots.position) {
+      try {
+        await roleMembros.setPosition(roleBots.position + 1);
+        console.log('[Roles] Cargo "Membros" posicionado acima do cargo "Bots".');
+      } catch (e) {
+        console.warn(`[Roles] Não foi possível posicionar Membros acima de Bots: ${e.message}`);
+      }
+    }
+    if (rolePenguin.position <= roleMembros.position) {
+      try {
+        await rolePenguin.setPosition(roleMembros.position + 1);
+        console.log('[Roles] Cargo "Penguin Supremo" posicionado acima do cargo "Membros".');
+      } catch (posError) {
+        console.warn(`[Roles] Aviso: Não foi possível reordenar Penguin Supremo acima de Membros (${posError.message}). Certifique-se de que o cargo do bot (GUTO Keys) esteja no topo das configurações do servidor.`);
       }
     }
 
-    if (count > 0) {
-      console.log(`[Roles] Cargo "Membros" atribuído a ${count} membros existentes.`);
+    // 5. Atribuir os cargos corretos para todos que já estão no servidor
+    console.log('[Roles] Verificando membros existentes para atribuição de tags...');
+    const members = await guild.members.fetch();
+    let countMembros = 0;
+    let countBots = 0;
+
+    for (const [id, member] of members) {
+      if (member.user.bot) {
+        // Se for um bot, recebe o cargo "Bots"
+        if (!member.roles.cache.has(roleBots.id)) {
+          await member.roles.add(roleBots).catch((err) => {
+            console.error(`[Roles] Não foi possível dar o cargo Bots a ${member.user.tag}:`, err);
+          });
+          countBots++;
+        }
+      } else {
+        // Se for um humano, recebe o cargo "Membros"
+        if (!member.roles.cache.has(roleMembros.id)) {
+          await member.roles.add(roleMembros).catch((err) => {
+            console.error(`[Roles] Não foi possível dar o cargo Membros a ${member.user.tag}:`, err);
+          });
+          countMembros++;
+        }
+      }
+    }
+
+    if (countMembros > 0 || countBots > 0) {
+      console.log(`[Roles] Atualização concluída: ${countMembros} novos cargos Membros e ${countBots} novos cargos Bots.`);
     } else {
-      console.log('[Roles] Todos os membros atuais já possuem a tag "Membros".');
+      console.log('[Roles] Todos os usuários e bots atuais já possuem os respectivos cargos.');
     }
 
   } catch (err) {
@@ -237,14 +283,23 @@ client.on('guildMemberAdd', async (member) => {
   try {
     const guild = member.guild;
 
-    // 1. Dar cargo de Membro
-    const roleMembros = guild.roles.cache.find(r => r.name === 'Membros');
-    if (roleMembros) {
-      await member.roles.add(roleMembros);
-      console.log(`[Roles] Novo membro ${member.user.tag} recebeu o cargo "Membros".`);
+    if (member.user.bot) {
+      // Se for bot, recebe o cargo "Bots"
+      const roleBots = guild.roles.cache.find(r => r.name === 'Bots');
+      if (roleBots) {
+        await member.roles.add(roleBots);
+        console.log(`[Roles] Novo bot ${member.user.tag} recebeu o cargo "Bots".`);
+      }
+    } else {
+      // Se for humano, recebe o cargo "Membros"
+      const roleMembros = guild.roles.cache.find(r => r.name === 'Membros');
+      if (roleMembros) {
+        await member.roles.add(roleMembros);
+        console.log(`[Roles] Novo membro ${member.user.tag} recebeu o cargo "Membros".`);
+      }
     }
 
-    // 2. Atualizar o contador de membros
+    // Atualizar o contador de membros
     await updateMemberCounter(guild);
   } catch (err) {
     console.error(`[Roles/Counter] Erro no evento guildMemberAdd para ${member.user.tag}:`, err);
