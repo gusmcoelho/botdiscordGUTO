@@ -27,6 +27,8 @@ const LIVEPIX_CLIENT_SECRET = cleanEnvVar(process.env.LIVEPIX_CLIENT_SECRET);
 
 if (DISCORD_TOKEN) {
   console.log(`[Bot] Carregando DISCORD_TOKEN. Comprimento: ${DISCORD_TOKEN.length}, Começa com: ${DISCORD_TOKEN.substring(0, 8)}...`);
+  const codes = Array.from(DISCORD_TOKEN).map(c => c.charCodeAt(0));
+  console.log(`[Bot] Char codes do DISCORD_TOKEN:`, codes.join(','));
 }
 
 
