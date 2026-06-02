@@ -77,6 +77,10 @@ create index idx_trial_keys_discord_id on trial_keys (discord_id);
 6. Copie o ID da aplicação e cole no campo `DISCORD_CLIENT_ID` no `.env`.
 7. No Discord, copie o ID do seu servidor (ativando o Modo Desenvolvedor em Configurações > Avançado) e cole no campo `DISCORD_GUILD_ID` no `.env`.
 8. Crie o canal `#support` no seu servidor, copie o ID do canal e cole no campo `SUPPORT_CHANNEL_ID` no `.env`.
+9. Adicione as configurações de venda no seu `.env`:
+   - `LOVABLE_API_BASE=https://gutopingo.lovable.app`
+   - `DISCORD_BOT_SECRET=<segredo_compartilhado_com_site>`
+   - `SHOP_CHANNEL_ID=<id_do_canal_de_compras>` (opcional, defaults para o canal onde o comando for executado)
 
 ---
 
@@ -89,11 +93,21 @@ npm start
 ```
 
 ### ⚙️ Inicializando o Painel de Suporte
-
 Uma vez que o bot esteja rodando e conectado ao seu servidor:
 1. Digite o comando `/setup-support` em qualquer canal de texto do servidor.
 2. O bot enviará uma mensagem em estilo Embed com o botão **Pegar Key de 5 Minutos** no canal configurado em `SUPPORT_CHANNEL_ID` (ou no canal atual caso não esteja configurado).
 3. Pronto! Quando os usuários clicarem no botão, o bot criará um canal temporário e enviará a chave de teste gerada.
+
+### 🛒 Inicializando o Painel de Compras (Sistema de Vendas)
+Uma vez que o bot esteja rodando e conectado ao seu servidor:
+1. Digite o comando `/setup-shop` em qualquer canal de texto do servidor (apenas administradores).
+2. O bot enviará uma mensagem Embed com o título **🛒 GUTO PINGO - Comprar Key** e os botões dos planos (`1 Dia`, `1 Semana`, `30 Dias`, `Vitalício`) no canal configurado em `SHOP_CHANNEL_ID` (ou no canal atual caso não esteja configurado).
+3. Quando o usuário clica em um plano:
+   - Uma mensagem efêmera é exibida perguntando a forma de pagamento: **PIX** ou **Cartão / PayPal**.
+   - O bot faz uma chamada segura para a API do site (`/api/public/bot/create-order`) e retorna o link de pagamento.
+   - O bot se inscreve no canal do **Supabase Realtime** para receber a notificação de pagamento confirmado (`status='paid'`).
+   - Assim que o webhook do site confirma o pagamento, a key do plano adquirido é gerada, e o bot cria automaticamente um canal privado `compra-<username>` sob a categoria `🛒 COMPRAS`, entregando a chave de licença em formato code block e também enviando via DM.
+   - Esse canal privado será auto-deletado após 4 horas ou quando o usuário clicar no botão **Fechar Canal**.
 
 ---
 

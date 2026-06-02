@@ -17,6 +17,9 @@ dotenv.config();
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;
 const SUPPORT_CHANNEL_ID = process.env.SUPPORT_CHANNEL_ID;
+const SHOP_CHANNEL_ID = process.env.SHOP_CHANNEL_ID;
+const LOVABLE_API_BASE = process.env.LOVABLE_API_BASE || 'https://gutopingo.lovable.app';
+const DISCORD_BOT_SECRET = process.env.DISCORD_BOT_SECRET;
 
 // Mapeamento dinâmico de Banco de Dados
 const SUPABASE_TABLE = process.env.SUPABASE_TABLE || 'licenses';
@@ -113,11 +116,11 @@ async function cleanupOldTrialChannels() {
     const fourHoursMs = 4 * 60 * 60 * 1000;
 
     for (const [id, channel] of channels) {
-      if (channel && channel.type === ChannelType.GuildText && channel.name.startsWith('trial-')) {
+      if (channel && channel.type === ChannelType.GuildText && (channel.name.startsWith('trial-') || channel.name.startsWith('compra-'))) {
         const age = now - channel.createdTimestamp;
         if (age >= fourHoursMs) {
           console.log(`[Cleanup] Deletando canal expirado: ${channel.name} (Idade: ${Math.round(age / 1000 / 60)} minutos)`);
-          await channel.delete('Canal de teste de 5 minutos expirou (limite de 4 horas atingido).').catch((err) => {
+          await channel.delete('Canal de teste/compra expirou (limite de 4 horas atingido).').catch((err) => {
             console.error(`[Cleanup] Erro ao deletar o canal ${channel.name}:`, err);
           });
         }
@@ -125,6 +128,150 @@ async function cleanupOldTrialChannels() {
     }
   } catch (err) {
     console.error('[Cleanup] Erro crítico ao limpar canais antigos:', err);
+  }
+}
+
+// Função para entregar a chave comprada ao usuário
+async function deliverKey(orderRow, lang = 'pt') {
+  const { discord_id: discordId, discord_username: username, license_key: licenseKey, plan_id: planId } = orderRow;
+  const texts = SHOP_LOCALE[lang] || SHOP_LOCALE.pt;
+
+  const planName = texts.validityText[planId] || planId;
+  const validity = texts.validityText[planId] || 'Vitalício';
+
+  try {
+    if (!DISCORD_GUILD_ID) {
+      console.error('[Delivery] DISCORD_GUILD_ID não está configurado.');
+      return;
+    }
+
+    const guild = client.guilds.cache.get(DISCORD_GUILD_ID);
+    if (!guild) {
+      console.error(`[Delivery] Guild não encontrado no cache com o ID: ${DISCORD_GUILD_ID}`);
+      return;
+    }
+
+    // 1. Obter ou criar a categoria "🛒 COMPRAS"
+    let category = guild.channels.cache.find(
+      c => c.type === ChannelType.GuildCategory && c.name === '🛒 COMPRAS'
+    );
+    if (!category) {
+      try {
+        category = await guild.channels.create({
+          name: '🛒 COMPRAS',
+          type: ChannelType.GuildCategory,
+          permissionOverwrites: [
+            {
+              id: guild.id, // @everyone (Bloqueia visualização)
+              deny: [PermissionFlagsBits.ViewChannel]
+            }
+          ]
+        });
+        console.log('[Delivery] Categoria "🛒 COMPRAS" criada com sucesso.');
+      } catch (catErr) {
+        console.error('[Delivery] Erro ao criar categoria "🛒 COMPRAS":', catErr);
+      }
+    }
+
+    // 2. Criar o canal de texto privado compra-<username-sanitizado>
+    const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const channelName = `${texts.channelPrefix}${sanitizedUsername}`;
+
+    const privateChannel = await guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      parent: category ? category.id : null,
+      permissionOverwrites: [
+        {
+          id: guild.id, // @everyone (Bloqueia visualização geral)
+          deny: [PermissionFlagsBits.ViewChannel]
+        },
+        {
+          id: discordId, // Usuário comprador (Permite ver e ler histórico)
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory
+          ]
+        },
+        {
+          id: client.user.id, // O próprio Bot
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.ManageChannels
+          ]
+        }
+      ]
+    });
+
+    console.log(`[Delivery] Canal privado de compra ${privateChannel.name} criado.`);
+
+    // 3. Criar embed
+    const deliveryEmbed = new EmbedBuilder()
+      .setTitle(texts.deliveryTitle)
+      .setDescription(texts.deliveryDesc(discordId))
+      .setColor(0x00FF87) // Vibrant green
+      .addFields(
+        { name: texts.fieldKey, value: `\`\`\`${licenseKey}\`\`\`` },
+        { name: texts.fieldPlan, value: planName, inline: true },
+        { name: texts.fieldValidity, value: validity, inline: true }
+      )
+      .setFooter({ text: texts.footerClose })
+      .setTimestamp();
+
+    // Botão de fechar canal
+    const closeButton = new ButtonBuilder()
+      .setCustomId(`close_purchase_channel_${lang}`)
+      .setLabel(texts.btnClose)
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('🔒');
+
+    const row = new ActionRowBuilder().addComponents(closeButton);
+
+    await privateChannel.send({
+      content: `<@${discordId}>`,
+      embeds: [deliveryEmbed],
+      components: [row]
+    });
+
+    // 4. Tentar enviar a key via DM para redundância
+    try {
+      const user = await client.users.fetch(discordId);
+      if (user) {
+        const dmEmbed = new EmbedBuilder()
+          .setTitle(texts.dmTitle)
+          .setDescription(texts.dmDesc(planName))
+          .setColor(0x00FF87)
+          .addFields(
+            { name: texts.fieldKey, value: `\`\`\`${licenseKey}\`\`\`` },
+            { name: texts.fieldValidity, value: validity }
+          )
+          .setTimestamp();
+
+        await user.send({ embeds: [dmEmbed] });
+        console.log(`[Delivery] Key enviada com sucesso por DM para ${username}.`);
+      }
+    } catch (dmError) {
+      console.warn(`[Delivery] Não foi possível enviar a key por DM para ${username}:`, dmError.message);
+    }
+
+    // 5. Agendar exclusão automática do canal em 4 horas (14.400.000 ms)
+    setTimeout(async () => {
+      try {
+        const currentChannel = guild.channels.cache.get(privateChannel.id);
+        if (currentChannel) {
+          await currentChannel.delete('Limite de 4 horas do canal de compra atingido.');
+          console.log(`[Cleanup] Canal de compra ${privateChannel.name} deletado automaticamente após 4 horas.`);
+        }
+      } catch (err) {
+        // Silencia erro se já deletado
+      }
+    }, 4 * 60 * 60 * 1000);
+
+  } catch (err) {
+    console.error(`[Delivery] Erro crítico ao entregar key para o usuário ${username} (${discordId}):`, err);
   }
 }
 
@@ -283,15 +430,85 @@ client.once('ready', async () => {
           {
             name: 'setup-support',
             description: 'Envia o painel de resgate de key no canal de suporte'
+          },
+          {
+            name: 'setup-shop',
+            description: 'Envia o painel de compra de keys no canal de vendas'
           }
         ]);
-        console.log(`[Bot] Comando /setup-support registrado com sucesso no servidor: ${guild.name}`);
+        console.log(`[Bot] Comandos /setup-support e /setup-shop registrados com sucesso no servidor: ${guild.name}`);
         
         // Configurar e atribuir cargos
         await setupServerRoles();
 
         // Configurar / Atualizar o contador de membros no topo
         await updateMemberCounter(guild);
+
+        // 1. Verificar/criar canal de vendas "shop"
+        try {
+          let shopChannel = guild.channels.cache.find(
+            c => c.type === ChannelType.GuildText && c.name === 'shop'
+          );
+          if (!shopChannel) {
+            shopChannel = await guild.channels.create({
+              name: 'shop',
+              type: ChannelType.GuildText,
+              permissionOverwrites: [
+                {
+                  id: guild.id, // @everyone (Pode ver, ler histórico, mas NÃO enviar mensagens)
+                  allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+                  deny: [PermissionFlagsBits.SendMessages]
+                }
+              ]
+            });
+            console.log('[Shop] Canal #shop criado com sucesso.');
+          }
+
+          // 2. Enviar o painel de compras no canal #shop caso ainda não tenha sido enviado
+          const messages = await shopChannel.messages.fetch({ limit: 10 }).catch(() => null);
+          const alreadySent = messages && messages.some(msg => msg.author.id === client.user.id && msg.embeds.some(e => e.title && e.title.includes('GUTO PINGO - Shop')));
+
+          if (!alreadySent) {
+            const shopEmbed = new EmbedBuilder()
+              .setTitle('🛒 GUTO PINGO - Shop / Loja / Dükkan')
+              .setDescription(
+                '🇺🇸 Select your language below to buy a key.\n' +
+                '🇧🇷 Selecione seu idioma abaixo para comprar uma chave.\n' +
+                '🇹🇷 Anahtar satın almak için aşağıdan dilinizi seçin.'
+              )
+              .setColor(0x00FF87)
+              .setFooter({ text: 'Guto Pingo Sales System' })
+              .setTimestamp();
+
+            const btnEn = new ButtonBuilder()
+              .setCustomId('buy_lang_en')
+              .setLabel('English')
+              .setStyle(ButtonStyle.Primary)
+              .setEmoji('🇺🇸');
+
+            const btnPt = new ButtonBuilder()
+              .setCustomId('buy_lang_pt')
+              .setLabel('Português')
+              .setStyle(ButtonStyle.Primary)
+              .setEmoji('🇧🇷');
+
+            const btnTr = new ButtonBuilder()
+              .setCustomId('buy_lang_tr')
+              .setLabel('Türkçe')
+              .setStyle(ButtonStyle.Primary)
+              .setEmoji('🇹🇷');
+
+            const row = new ActionRowBuilder().addComponents(btnEn, btnPt, btnTr);
+
+            await shopChannel.send({
+              embeds: [shopEmbed],
+              components: [row]
+            });
+            console.log('[Shop] Painel de vendas postado automaticamente no canal #shop.');
+          }
+        } catch (shopErr) {
+          console.error('[Shop] Erro ao configurar canal #shop ou postar painel:', shopErr);
+        }
 
         // Executar uma limpeza inicial de canais órfãos antigos ao ligar o bot
         await cleanupOldTrialChannels();
@@ -403,6 +620,108 @@ const LOCALE = {
   }
 };
 
+const SHOP_LOCALE = {
+  en: {
+    choosePlan: '🛒 **Choose your Plan**',
+    plan1Day: '1 Day - R$ 20',
+    plan1Week: '1 Week - R$ 45',
+    plan30Days: '30 Days - R$ 100',
+    planLifetime: 'Lifetime - R$ 169,99',
+    paymentMethod: 'How would you like to pay?',
+    pixLabel: 'PIX (Brazil Only)',
+    cardLabel: 'Card / PayPal',
+    waitPayment: 'Waiting for payment confirmation...',
+    paymentInstructions: '⚠️ **After payment, your key will be delivered automatically in a private channel on this server. Do not close Discord!**',
+    btnPayLabel: 'Go to Payment',
+    errorBilling: '❌ An error occurred while generating billing. Please try again later.',
+    errorConnection: '❌ An error occurred while connecting to the payment API.',
+    paymentExpired: (planName) => `⚠️ The 30-minute time limit for payment of the **${planName}** plan has expired. If you made the payment, contact support.`,
+    channelPrefix: 'purchase-',
+    deliveryTitle: '✅ Payment confirmed!',
+    deliveryDesc: (discordId) => `Here is your key for Guto Pingo, <@${discordId}>!`,
+    fieldKey: '🔑 Your Key',
+    fieldPlan: '📦 Plan',
+    fieldValidity: '⏰ Validity',
+    validityText: {
+      '1day': '1 Day',
+      '1week': '1 Week',
+      '30days': '30 Days',
+      'lifetime': 'Lifetime (no expiration)'
+    },
+    footerClose: 'This channel will be closed in 4 hours.',
+    btnClose: 'Close Channel',
+    dmTitle: '✅ Payment confirmed - Guto Pingo!',
+    dmDesc: (planName) => `Thank you for your purchase! Here is your key for the **${planName}** plan:`,
+    closeWarning: '🔒 This purchase channel will be closed and deleted in 5 seconds...'
+  },
+  pt: {
+    choosePlan: '🛒 **Escolha seu Plano**',
+    plan1Day: '1 Dia - R$ 20',
+    plan1Week: '1 Semana - R$ 45',
+    plan30Days: '30 Dias - R$ 100',
+    planLifetime: 'Vitalício - R$ 169,99',
+    paymentMethod: 'Como você deseja realizar o pagamento?',
+    pixLabel: 'PIX',
+    cardLabel: 'Cartão / PayPal',
+    waitPayment: 'Aguardando confirmação do pagamento...',
+    paymentInstructions: '⚠️ **Após o pagamento, sua key será entregue automaticamente em um canal privado neste servidor. Não feche o Discord!**',
+    btnPayLabel: 'Ir para o Pagamento',
+    errorBilling: '❌ Ocorreu um erro ao gerar a cobrança. Por favor, tente novamente mais tarde.',
+    errorConnection: '❌ Ocorreu um erro ao se conectar com a API de pagamento.',
+    paymentExpired: (planName) => `⚠️ O tempo limite de 30 minutos para o pagamento do plano **${planName}** expirou. Se você já realizou o pagamento, fale com o suporte.`,
+    channelPrefix: 'compra-',
+    deliveryTitle: '✅ Pagamento confirmado!',
+    deliveryDesc: (discordId) => `Aqui está sua key do Guto Pingo, <@${discordId}>!`,
+    fieldKey: '🔑 Sua Chave',
+    fieldPlan: '📦 Plano',
+    fieldValidity: '⏰ Validade',
+    validityText: {
+      '1day': '1 Dia',
+      '1week': '1 Semana',
+      '30days': '30 Dias',
+      'lifetime': 'Vitalício (sem expiração)'
+    },
+    footerClose: 'Este canal será fechado em 4 horas.',
+    btnClose: 'Fechar Canal',
+    dmTitle: '✅ Pagamento confirmado - Guto Pingo!',
+    dmDesc: (planName) => `Obrigado pela compra! Aqui está sua key do plano **${planName}**:`,
+    closeWarning: '🔒 Este canal de compra será fechado e excluído em 5 segundos...'
+  },
+  tr: {
+    choosePlan: '🛒 **Planınızı Seçin**',
+    plan1Day: '1 Günlük - R$ 20',
+    plan1Week: '1 Haftalık - R$ 45',
+    plan30Days: '30 Günlük - R$ 100',
+    planLifetime: 'Ömür Boyu - R$ 169,99',
+    paymentMethod: 'Nasıl ödeme yapmak istersiniz?',
+    pixLabel: 'PIX (Brezilya)',
+    cardLabel: 'Kart / PayPal',
+    waitPayment: 'Ödeme onayı bekleniyor...',
+    paymentInstructions: '⚠️ **Ödemeden sonra anahtarınız bu sunucudaki özel bir kanalda otomatik olarak teslim edilecektir. Discord\'u kapatmayın!**',
+    btnPayLabel: 'Ödemeye Git',
+    errorBilling: '❌ Fatura oluşturulurken bir hata oluştu. Lütfen daha sonra tekrar deneyin.',
+    errorConnection: '❌ Ödeme API\'sine bağlanırken bir hata oluştu.',
+    paymentExpired: (planName) => `⚠️ **${planName}** planı için 30 dakikalık ödeme süresi doldu. Ödeme yaptıysanız destek ekibiyle iletişime geçin.`,
+    channelPrefix: 'satinalma-',
+    deliveryTitle: '✅ Ödeme onaylandı!',
+    deliveryDesc: (discordId) => `İşte Guto Pingo anahtarınız, <@${discordId}>!`,
+    fieldKey: '🔑 Anahtarınız',
+    fieldPlan: '📦 Plan',
+    fieldValidity: '⏰ Geçerlilik',
+    validityText: {
+      '1day': '1 Gün',
+      '1week': '1 Hafta',
+      '30days': '30 Gün',
+      'lifetime': 'Ömür Boyu (süre sınırı yok)'
+    },
+    footerClose: 'Bu kanal 4 saat içinde kapatılacaktır.',
+    btnClose: 'Kanalı Kapat',
+    dmTitle: '✅ Ödeme onaylandı - Guto Pingo!',
+    dmDesc: (planName) => `Satın aldığınız için teşekkürler! İşte **${planName}** planı anahtarınız:`,
+    closeWarning: '🔒 Bu satın alma kanalı 5 saniye içinde kapatılacak ve silinecektir...'
+  }
+};
+
 client.on('interactionCreate', async (interaction) => {
   // 1. Tratamento do Comando de Setup (/setup-support)
   if (interaction.isChatInputCommand()) {
@@ -470,6 +789,76 @@ client.on('interactionCreate', async (interaction) => {
         console.error('[Bot] Erro ao enviar o painel no canal:', err);
         await interaction.editReply({
           content: `Error sending message to the channel. Make sure the bot has the required permissions.`
+        });
+      }
+    } else if (interaction.commandName === 'setup-shop') {
+      // Verificar permissão de Administrador
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        return interaction.reply({
+          content: 'Somente administradores podem usar este comando.',
+          ephemeral: true
+        });
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+
+      const channelId = SHOP_CHANNEL_ID || interaction.channelId;
+      const targetChannel = interaction.guild.channels.cache.get(channelId);
+
+      if (!targetChannel || !targetChannel.isTextBased()) {
+        return interaction.editReply({
+          content: `Canal de vendas inválido ou não encontrado. Verifique o SHOP_CHANNEL_ID no seu arquivo .env.`
+        });
+      }
+
+      const shopEmbed = new EmbedBuilder()
+        .setTitle('🛒 GUTO PINGO - Comprar Key')
+        .setDescription(
+          'Selecione um plano abaixo para adquirir sua chave de acesso ao **Guto Pingo**.\n\n' +
+          'Após o pagamento, um canal privado será criado automaticamente para entregar sua chave de licença.'
+        )
+        .setColor(0x00FF87) // Premium vibrant green
+        .setFooter({ text: 'Sistema de Vendas Guto Pingo • Pagamento seguro' })
+        .setTimestamp();
+
+      const btn1Day = new ButtonBuilder()
+        .setCustomId('buy_plan_1day')
+        .setLabel('1 Dia - R$ 20')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('🌅');
+
+      const btn1Week = new ButtonBuilder()
+        .setCustomId('buy_plan_1week')
+        .setLabel('1 Semana - R$ 45')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('📅');
+
+      const btn30Days = new ButtonBuilder()
+        .setCustomId('buy_plan_30days')
+        .setLabel('30 Dias - R$ 100')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('🗓️');
+
+      const btnLifetime = new ButtonBuilder()
+        .setCustomId('buy_plan_lifetime')
+        .setLabel('Vitalício - R$ 169,99')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('👑');
+
+      const row = new ActionRowBuilder().addComponents(btn1Day, btn1Week, btn30Days, btnLifetime);
+
+      try {
+        await targetChannel.send({
+          embeds: [shopEmbed],
+          components: [row]
+        });
+        await interaction.editReply({
+          content: `Painel de vendas enviado com sucesso no canal: ${targetChannel}`
+        });
+      } catch (err) {
+        console.error('[Shop] Erro ao enviar o painel no canal:', err);
+        await interaction.editReply({
+          content: `Erro ao enviar mensagem ao canal. Certifique-se de que o bot possui as permissões necessárias.`
         });
       }
     }
@@ -665,6 +1054,170 @@ client.on('interactionCreate', async (interaction) => {
 
       } catch (err) {
         console.error('[Bot] Erro ao responder fechamento de canal:', err);
+      }
+    }
+
+    // 4. Tratamento de Clique no Botão de Compra de Planos
+    if (interaction.customId.startsWith('buy_plan_')) {
+      const planId = interaction.customId.replace('buy_plan_', ''); // '1day', '1week', '30days', 'lifetime'
+
+      const planNames = {
+        '1day': '1 Dia',
+        '1week': '1 Semana',
+        '30days': '30 Dias',
+        'lifetime': 'Vitalício'
+      };
+      const planName = planNames[planId] || planId;
+
+      const btnPix = new ButtonBuilder()
+        .setCustomId(`pay_method_pix_${planId}`)
+        .setLabel('PIX')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('🇧🇷');
+
+      const btnStripe = new ButtonBuilder()
+        .setCustomId(`pay_method_stripe_${planId}`)
+        .setLabel('Cartão / PayPal')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('💳');
+
+      const row = new ActionRowBuilder().addComponents(btnPix, btnStripe);
+
+      try {
+        await interaction.reply({
+          content: `Você selecionou o plano **${planName}**. Como você deseja realizar o pagamento?`,
+          components: [row],
+          ephemeral: true
+        });
+      } catch (err) {
+        console.error('[Shop] Erro ao responder seleção de plano:', err);
+      }
+    }
+
+    // 5. Tratamento de Clique no Método de Pagamento
+    if (interaction.customId.startsWith('pay_method_')) {
+      const parts = interaction.customId.split('_');
+      const method = parts[2]; // 'pix' or 'stripe'
+      const planId = parts[3]; // '1day', '1week', '30days', 'lifetime'
+
+      try {
+        await interaction.deferReply({ ephemeral: true });
+
+        const discordId = interaction.user.id;
+        const username = interaction.user.username;
+
+        console.log(`[Shop] Criando ordem para ${username} (${discordId}) - Plano: ${planId}, Método: ${method}`);
+        const response = await fetch(`${LOVABLE_API_BASE}/api/public/bot/create-order`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            discord_id: discordId,
+            discord_username: username,
+            plan_id: planId,
+            method: method,
+            bot_secret: DISCORD_BOT_SECRET
+          })
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          console.error(`[Shop] Erro da API Lovable (status ${response.status}):`, errText);
+          return interaction.editReply({
+            content: `❌ Ocorreu um erro ao gerar a cobrança (Status: ${response.status}). Por favor, tente novamente mais tarde.`
+          });
+        }
+
+        const data = await response.json();
+        // Esperado: { order_id, method, payment_url, amount_brl, plan_name }
+        const { order_id: orderId, payment_url: paymentUrl, amount_brl: amountBrl, plan_name: planName } = data;
+
+        const paymentEmbed = new EmbedBuilder()
+          .setTitle('💳 Pagamento - GUTO PINGO')
+          .setDescription(
+            `Você escolheu o plano **${planName}**.\n\n` +
+            `**Valor:** R$ ${amountBrl.toFixed(2).replace('.', ',')}\n` +
+            `**Método:** ${method === 'pix' ? 'PIX (LivePix)' : 'Cartão / PayPal (Stripe)'}\n\n` +
+            `Clique no botão abaixo para ir à página de pagamento.`
+          )
+          .setColor(0xF1C40F)
+          .setFooter({ text: 'Aguardando confirmação do pagamento...' })
+          .setTimestamp();
+
+        const btnPay = new ButtonBuilder()
+          .setLabel('Ir para o Pagamento')
+          .setURL(paymentUrl)
+          .setStyle(ButtonStyle.Link);
+
+        const payRow = new ActionRowBuilder().addComponents(btnPay);
+
+        await interaction.editReply({
+          content: '⚠️ **Após o pagamento, sua key será entregue automaticamente em um canal privado neste servidor. Não feche o Discord!**',
+          embeds: [paymentEmbed],
+          components: [payRow]
+        });
+
+        // Configurar inscrição no Supabase Realtime para esta ordem
+        console.log(`[Realtime] Inscrevendo no canal bot_order_${orderId} para o usuário ${username}`);
+        
+        let timeout;
+
+        const channel = supabase
+          .channel(`bot_order_${orderId}`)
+          .on('postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'bot_orders', filter: `id=eq.${orderId}` },
+            async (payload) => {
+              console.log(`[Realtime] Update detectado na ordem ${orderId}. Status: ${payload.new.status}`);
+              if (payload.new.status === 'paid' && payload.new.license_key) {
+                clearTimeout(timeout);
+                channel.unsubscribe();
+                console.log(`[Realtime] Ordem ${orderId} foi paga. Iniciando entrega.`);
+                await deliverKey(payload.new);
+              }
+            })
+          .subscribe((status) => {
+            console.log(`[Realtime] Subscription status para canal bot_order_${orderId}: ${status}`);
+          });
+
+        timeout = setTimeout(async () => {
+          channel.unsubscribe();
+          console.log(`[Realtime] Inscrição da ordem ${orderId} expirou por timeout (30 minutos).`);
+          try {
+            const user = await client.users.fetch(discordId);
+            if (user) {
+              await user.send(`⚠️ O tempo limite de 30 minutos para o pagamento do plano **${planName}** expirou. Se você já realizou o pagamento e não recebeu a key, fale com o suporte.`);
+            }
+          } catch (dmError) {
+            console.warn(`[Shop] Não foi possível enviar DM de expiração para ${username}:`, dmError.message);
+          }
+        }, 30 * 60 * 1000);
+
+      } catch (err) {
+        console.error('[Shop] Erro de conexão/API ao processar pagamento:', err);
+        return interaction.editReply({
+          content: '❌ Ocorreu um erro ao processar o seu pagamento. Por favor, tente novamente.'
+        });
+      }
+    }
+
+    // 6. Tratamento de Clique no Botão de Fechar Canal de Compra
+    if (interaction.customId === 'close_purchase_channel') {
+      try {
+        await interaction.reply({
+          content: '🔒 Este canal de compra será fechado e excluído em 5 segundos...'
+        });
+
+        setTimeout(async () => {
+          try {
+            await interaction.channel.delete();
+          } catch (deleteError) {
+            console.error('[Bot] Não foi possível deletar o canal de compra:', deleteError);
+          }
+        }, 5000);
+
+      } catch (err) {
+        console.error('[Bot] Erro ao responder fechamento de canal de compra:', err);
       }
     }
   }
