@@ -14,14 +14,21 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Configurações das Variáveis de Ambiente
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;
-const SUPPORT_CHANNEL_ID = process.env.SUPPORT_CHANNEL_ID;
-const SHOP_CHANNEL_ID = process.env.SHOP_CHANNEL_ID;
+const cleanEnvVar = (val) => val ? val.trim().replace(/^['"]|['"]$/g, '') : val;
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
-const LIVEPIX_CLIENT_ID = process.env.LIVEPIX_CLIENT_ID;
-const LIVEPIX_CLIENT_SECRET = process.env.LIVEPIX_CLIENT_SECRET;
+const DISCORD_TOKEN = cleanEnvVar(process.env.DISCORD_TOKEN);
+const DISCORD_GUILD_ID = cleanEnvVar(process.env.DISCORD_GUILD_ID);
+const SUPPORT_CHANNEL_ID = cleanEnvVar(process.env.SUPPORT_CHANNEL_ID);
+const SHOP_CHANNEL_ID = cleanEnvVar(process.env.SHOP_CHANNEL_ID);
+
+const STRIPE_SECRET_KEY = cleanEnvVar(process.env.STRIPE_SECRET_KEY);
+const LIVEPIX_CLIENT_ID = cleanEnvVar(process.env.LIVEPIX_CLIENT_ID);
+const LIVEPIX_CLIENT_SECRET = cleanEnvVar(process.env.LIVEPIX_CLIENT_SECRET);
+
+if (DISCORD_TOKEN) {
+  console.log(`[Bot] Carregando DISCORD_TOKEN. Comprimento: ${DISCORD_TOKEN.length}, Começa com: ${DISCORD_TOKEN.substring(0, 8)}...`);
+}
+
 
 const activeOrdersLang = new Map();
 
@@ -292,7 +299,7 @@ async function getLivePixToken() {
       'grant_type': 'client_credentials',
       'client_id': LIVEPIX_CLIENT_ID,
       'client_secret': LIVEPIX_CLIENT_SECRET,
-      'scope': 'payments'
+      'scope': 'payments:write payments:read'
     })
   });
   if (!response.ok) {
