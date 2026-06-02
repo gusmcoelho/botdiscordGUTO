@@ -472,9 +472,14 @@ client.once('ready', async () => {
             const shopEmbed = new EmbedBuilder()
               .setTitle('🛒 GUTO PINGO - Shop / Loja / Dükkan')
               .setDescription(
-                '🇺🇸 Select your language below to buy a key.\n' +
-                '🇧🇷 Selecione seu idioma abaixo para comprar uma chave.\n' +
-                '🇹🇷 Anahtar satın almak için aşağıdan dilinizi seçin.'
+                '🇧🇷 **Português:**\n' +
+                'Selecione seu idioma abaixo para comprar uma chave.\n\n' +
+                '──────────────────────────\n\n' +
+                '🇺🇸 **English:**\n' +
+                'Select your language below to buy a key.\n\n' +
+                '──────────────────────────\n\n' +
+                '🇹🇷 **Türkçe:**\n' +
+                'Anahtar satın almak için aşağıdan dilinizi seçin.'
               )
               .setColor(0x00FF87)
               .setFooter({ text: 'Guto Pingo Sales System' })
@@ -748,8 +753,13 @@ client.on('interactionCreate', async (interaction) => {
       const supportEmbed = new EmbedBuilder()
         .setTitle('🔑 Guto - Trial Key Claim / Resgate de Chave / Deneme Anahtarı')
         .setDescription(
-          'Select your language below to claim your free 5-minute trial key.\n' +
-          'Selecione seu idioma abaixo para resgatar sua chave de teste de 5 minutos.\n' +
+          '🇧🇷 **Português:**\n' +
+          'Selecione seu idioma abaixo para resgatar sua chave de teste de 5 minutos.\n\n' +
+          '──────────────────────────\n\n' +
+          '🇺🇸 **English:**\n' +
+          'Select your language below to claim your free 5-minute trial key.\n\n' +
+          '──────────────────────────\n\n' +
+          '🇹🇷 **Türkçe:**\n' +
           '5 dakikalık ücretsiz deneme anahtarınızı almak için aşağıdan dilinizi seçin.'
         )
         .setColor(0x5865F2)
