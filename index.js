@@ -18,8 +18,12 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;
 const SUPPORT_CHANNEL_ID = process.env.SUPPORT_CHANNEL_ID;
 const SHOP_CHANNEL_ID = process.env.SHOP_CHANNEL_ID;
-const LOVABLE_API_BASE = process.env.LOVABLE_API_BASE || 'https://gutopingo.lovable.app';
-const DISCORD_BOT_SECRET = process.env.DISCORD_BOT_SECRET;
+
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const LIVEPIX_CLIENT_ID = process.env.LIVEPIX_CLIENT_ID;
+const LIVEPIX_CLIENT_SECRET = process.env.LIVEPIX_CLIENT_SECRET;
+
+const activeOrdersLang = new Map();
 
 // Mapeamento dinâmico de Banco de Dados
 const SUPABASE_TABLE = process.env.SUPABASE_TABLE || 'licenses';
@@ -275,6 +279,190 @@ async function deliverKey(orderRow, lang = 'pt') {
   }
 }
 
+// --- Funções Auxiliares de Pagamento (LivePix e Stripe) ---
+
+// Obter token OAuth2 para a API da LivePix
+async function getLivePixToken() {
+  const response = await fetch('https://oauth.livepix.gg/oauth2/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({
+      'grant_type': 'client_credentials',
+      'client_id': LIVEPIX_CLIENT_ID,
+      'client_secret': LIVEPIX_CLIENT_SECRET,
+      'scope': 'payments'
+    })
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`LivePix Auth Error: ${response.status} - ${text}`);
+  }
+  const data = await response.json();
+  return data.access_token;
+}
+
+// Criar pagamento na API do LivePix (retorna reference e redirectUrl)
+async function createLivePixPayment(amountCents) {
+  const token = await getLivePixToken();
+  const response = await fetch('https://api.livepix.gg/v2/payments', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      amount: amountCents,
+      currency: 'BRL',
+      redirectUrl: 'https://checkout.livepix.gg/success'
+    })
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`LivePix Payment Error: ${response.status} - ${text}`);
+  }
+  const res = await response.json();
+  return res.data;
+}
+
+// Verificar se um pagamento do LivePix foi recebido
+async function checkLivePixPayment(reference) {
+  try {
+    const token = await getLivePixToken();
+    const response = await fetch(`https://api.livepix.gg/v2/payments?reference=${reference}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    if (!response.ok) {
+      console.error(`[LivePix] Erro ao consultar pagamento ${reference}:`, response.status);
+      return false;
+    }
+    const res = await response.json();
+    return res.data && res.data.length > 0;
+  } catch (err) {
+    console.error(`[LivePix] Falha ao verificar pagamento ${reference}:`, err.message);
+    return false;
+  }
+}
+
+// Criar uma Session de Checkout da Stripe
+async function createStripeSession(amountCents, planName, planId, discordId) {
+  const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({
+      'success_url': 'https://checkout.stripe.com/success',
+      'cancel_url': 'https://checkout.stripe.com/cancel',
+      'mode': 'payment',
+      'line_items[0][price_data][currency]': 'brl',
+      'line_items[0][price_data][product_data][name]': planName,
+      'line_items[0][price_data][unit_amount]': amountCents.toString(),
+      'line_items[0][quantity]': '1',
+      'metadata[discord_id]': discordId,
+      'metadata[plan_id]': planId
+    })
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Stripe Session Error: ${response.status} - ${text}`);
+  }
+  return response.json();
+}
+
+// Verificar se uma Session da Stripe foi paga
+async function checkStripePayment(sessionId) {
+  try {
+    const response = await fetch(`https://api.stripe.com/v1/checkout/sessions/${sessionId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${STRIPE_SECRET_KEY}`
+      }
+    });
+    if (!response.ok) {
+      console.error(`[Stripe] Erro ao consultar session ${sessionId}:`, response.status);
+      return false;
+    }
+    const session = await response.json();
+    return session.payment_status === 'paid';
+  } catch (err) {
+    console.error(`[Stripe] Falha ao verificar pagamento ${sessionId}:`, err.message);
+    return false;
+  }
+}
+
+// Loop periódico para verificar pagamentos pendentes no Supabase
+async function pollPendingOrders() {
+  try {
+    const { data: pendingOrders, error } = await supabase
+      .from('bot_orders')
+      .select('*')
+      .eq('status', 'pending');
+
+    if (error) {
+      console.error('[Polling] Erro ao buscar ordens pendentes:', error);
+      return;
+    }
+
+    if (!pendingOrders || pendingOrders.length === 0) return;
+
+    for (const order of pendingOrders) {
+      let isPaid = false;
+      const orderId = order.id;
+
+      try {
+        if (order.method === 'pix') {
+          isPaid = await checkLivePixPayment(order.payment_reference);
+        } else {
+          isPaid = await checkStripePayment(order.payment_reference);
+        }
+
+        if (isPaid) {
+          console.log(`[Polling] Ordem ${orderId} confirmada como paga!`);
+          
+          // Gerar uma licença no formato GUTO-XXXX-XXXX-XXXX
+          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+          const genSegment = () => Array.from({ length: 4 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+          const licenseKey = `GUTO-${genSegment()}-${genSegment()}-${genSegment()}`;
+
+          // Atualizar a linha no banco de dados
+          const { data: updatedOrder, error: updateError } = await supabase
+            .from('bot_orders')
+            .update({
+              status: 'paid',
+              paid_at: new Date().toISOString(),
+              license_key: licenseKey
+            })
+            .eq('id', orderId)
+            .select()
+            .single();
+
+          if (updateError) {
+            console.error(`[Polling] Erro ao atualizar ordem ${orderId} para paid:`, updateError);
+            continue;
+          }
+
+          // Obter idioma da memória ou padrão para 'pt'
+          const lang = activeOrdersLang.get(orderId) || 'pt';
+          activeOrdersLang.delete(orderId);
+
+          // Entregar a key para o usuário no canal privado e DM
+          await deliverKey(updatedOrder, lang);
+        }
+      } catch (orderErr) {
+        console.error(`[Polling] Erro ao processar ordem ${orderId}:`, orderErr);
+      }
+    }
+  } catch (err) {
+    console.error('[Polling] Erro crítico no loop de consulta:', err);
+  }
+}
+
 // Função para criar e atribuir cargos iniciais
 async function setupServerRoles() {
   if (!DISCORD_GUILD_ID) return;
@@ -520,6 +708,9 @@ client.once('ready', async () => {
 
         // Agendar limpeza para rodar a cada 15 minutos
         setInterval(cleanupOldTrialChannels, 15 * 60 * 1000);
+
+        // Agendar verificação de pagamentos a cada 10 segundos
+        setInterval(pollPendingOrders, 10 * 1000);
       } else {
         console.warn(`[Bot] Aviso: Servidor com ID ${DISCORD_GUILD_ID} não foi encontrado no cache. Verifique se o bot está no servidor.`);
       }
