@@ -1067,27 +1067,72 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
 
-    // 4. Tratamento de Clique no Botão de Compra de Planos
-    if (interaction.customId.startsWith('buy_plan_')) {
-      const planId = interaction.customId.replace('buy_plan_', ''); // '1day', '1week', '30days', 'lifetime'
+    // 4. Tratamento de Clique no Botão de Seleção de Idioma para Compra
+    if (interaction.customId.startsWith('buy_lang_')) {
+      const lang = interaction.customId.replace('buy_lang_', ''); // 'en', 'pt', or 'tr'
+      const texts = SHOP_LOCALE[lang] || SHOP_LOCALE.pt;
 
-      const planNames = {
-        '1day': '1 Dia',
-        '1week': '1 Semana',
-        '30days': '30 Dias',
-        'lifetime': 'Vitalício'
+      const btn1Day = new ButtonBuilder()
+        .setCustomId(`buy_plan_1day_${lang}`)
+        .setLabel(texts.plan1Day)
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('🌅');
+
+      const btn1Week = new ButtonBuilder()
+        .setCustomId(`buy_plan_1week_${lang}`)
+        .setLabel(texts.plan1Week)
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('📅');
+
+      const btn30Days = new ButtonBuilder()
+        .setCustomId(`buy_plan_30days_${lang}`)
+        .setLabel(texts.plan30Days)
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('🗓️');
+
+      const btnLifetime = new ButtonBuilder()
+        .setCustomId(`buy_plan_lifetime_${lang}`)
+        .setLabel(texts.planLifetime)
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('👑');
+
+      const row = new ActionRowBuilder().addComponents(btn1Day, btn1Week, btn30Days, btnLifetime);
+
+      try {
+        await interaction.reply({
+          content: texts.choosePlan,
+          components: [row],
+          ephemeral: true
+        });
+      } catch (err) {
+        console.error('[Shop] Erro ao responder seleção de idioma:', err);
+      }
+    }
+
+    // 5. Tratamento de Clique no Botão de Compra de Planos (Multilíngue)
+    if (interaction.customId.startsWith('buy_plan_')) {
+      const parts = interaction.customId.split('_');
+      const planId = parts[2]; // '1day', '1week', '30days', 'lifetime'
+      const lang = parts[3] || 'pt'; // 'en', 'pt', 'tr'
+      const texts = SHOP_LOCALE[lang] || SHOP_LOCALE.pt;
+
+      const planNameMap = {
+        '1day': texts.plan1Day.split(' - ')[0],
+        '1week': texts.plan1Week.split(' - ')[0],
+        '30days': texts.plan30Days.split(' - ')[0],
+        'lifetime': texts.planLifetime.split(' - ')[0]
       };
-      const planName = planNames[planId] || planId;
+      const planName = planNameMap[planId] || planId;
 
       const btnPix = new ButtonBuilder()
-        .setCustomId(`pay_method_pix_${planId}`)
-        .setLabel('PIX')
+        .setCustomId(`pay_method_pix_${planId}_${lang}`)
+        .setLabel(texts.pixLabel)
         .setStyle(ButtonStyle.Success)
         .setEmoji('🇧🇷');
 
       const btnStripe = new ButtonBuilder()
-        .setCustomId(`pay_method_stripe_${planId}`)
-        .setLabel('Cartão / PayPal')
+        .setCustomId(`pay_method_stripe_${planId}_${lang}`)
+        .setLabel(texts.cardLabel)
         .setStyle(ButtonStyle.Primary)
         .setEmoji('💳');
 
@@ -1095,7 +1140,7 @@ client.on('interactionCreate', async (interaction) => {
 
       try {
         await interaction.reply({
-          content: `Você selecionou o plano **${planName}**. Como você deseja realizar o pagamento?`,
+          content: `${texts.paymentMethod}\n*(Plan: **${planName}**)*`,
           components: [row],
           ephemeral: true
         });
@@ -1104,11 +1149,13 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
 
-    // 5. Tratamento de Clique no Método de Pagamento
+    // 6. Tratamento de Clique no Método de Pagamento (Multilíngue)
     if (interaction.customId.startsWith('pay_method_')) {
       const parts = interaction.customId.split('_');
       const method = parts[2]; // 'pix' or 'stripe'
       const planId = parts[3]; // '1day', '1week', '30days', 'lifetime'
+      const lang = parts[4] || 'pt'; // 'en', 'pt', 'tr'
+      const texts = SHOP_LOCALE[lang] || SHOP_LOCALE.pt;
 
       try {
         await interaction.deferReply({ ephemeral: true });
@@ -1116,7 +1163,7 @@ client.on('interactionCreate', async (interaction) => {
         const discordId = interaction.user.id;
         const username = interaction.user.username;
 
-        console.log(`[Shop] Criando ordem para ${username} (${discordId}) - Plano: ${planId}, Método: ${method}`);
+        console.log(`[Shop] Criando ordem para ${username} (${discordId}) - Plano: ${planId}, Método: ${method}, Idioma: ${lang}`);
         const response = await fetch(`${LOVABLE_API_BASE}/api/public/bot/create-order`, {
           method: 'POST',
           headers: {
@@ -1135,35 +1182,35 @@ client.on('interactionCreate', async (interaction) => {
           const errText = await response.text();
           console.error(`[Shop] Erro da API Lovable (status ${response.status}):`, errText);
           return interaction.editReply({
-            content: `❌ Ocorreu um erro ao gerar a cobrança (Status: ${response.status}). Por favor, tente novamente mais tarde.`
+            content: texts.errorBilling
           });
         }
 
         const data = await response.json();
         // Esperado: { order_id, method, payment_url, amount_brl, plan_name }
-        const { order_id: orderId, payment_url: paymentUrl, amount_brl: amountBrl, plan_name: planName } = data;
+        const { order_id: orderId, payment_url: paymentUrl, amount_brl: amountBrl, plan_name: apiPlanName } = data;
 
         const paymentEmbed = new EmbedBuilder()
-          .setTitle('💳 Pagamento - GUTO PINGO')
+          .setTitle(`💳 ${texts.paymentMethod}`)
           .setDescription(
-            `Você escolheu o plano **${planName}**.\n\n` +
+            `**${apiPlanName}**\n\n` +
             `**Valor:** R$ ${amountBrl.toFixed(2).replace('.', ',')}\n` +
-            `**Método:** ${method === 'pix' ? 'PIX (LivePix)' : 'Cartão / PayPal (Stripe)'}\n\n` +
+            `**Método:** ${method === 'pix' ? texts.pixLabel : texts.cardLabel}\n\n` +
             `Clique no botão abaixo para ir à página de pagamento.`
           )
           .setColor(0xF1C40F)
-          .setFooter({ text: 'Aguardando confirmação do pagamento...' })
+          .setFooter({ text: texts.waitPayment })
           .setTimestamp();
 
         const btnPay = new ButtonBuilder()
-          .setLabel('Ir para o Pagamento')
+          .setLabel(texts.btnPayLabel)
           .setURL(paymentUrl)
           .setStyle(ButtonStyle.Link);
 
         const payRow = new ActionRowBuilder().addComponents(btnPay);
 
         await interaction.editReply({
-          content: '⚠️ **Após o pagamento, sua key será entregue automaticamente em um canal privado neste servidor. Não feche o Discord!**',
+          content: texts.paymentInstructions,
           embeds: [paymentEmbed],
           components: [payRow]
         });
@@ -1183,7 +1230,7 @@ client.on('interactionCreate', async (interaction) => {
                 clearTimeout(timeout);
                 channel.unsubscribe();
                 console.log(`[Realtime] Ordem ${orderId} foi paga. Iniciando entrega.`);
-                await deliverKey(payload.new);
+                await deliverKey(payload.new, lang);
               }
             })
           .subscribe((status) => {
@@ -1196,7 +1243,7 @@ client.on('interactionCreate', async (interaction) => {
           try {
             const user = await client.users.fetch(discordId);
             if (user) {
-              await user.send(`⚠️ O tempo limite de 30 minutos para o pagamento do plano **${planName}** expirou. Se você já realizou o pagamento e não recebeu a key, fale com o suporte.`);
+              await user.send(texts.paymentExpired(apiPlanName));
             }
           } catch (dmError) {
             console.warn(`[Shop] Não foi possível enviar DM de expiração para ${username}:`, dmError.message);
@@ -1206,16 +1253,18 @@ client.on('interactionCreate', async (interaction) => {
       } catch (err) {
         console.error('[Shop] Erro de conexão/API ao processar pagamento:', err);
         return interaction.editReply({
-          content: '❌ Ocorreu um erro ao processar o seu pagamento. Por favor, tente novamente.'
+          content: texts.errorConnection
         });
       }
     }
 
-    // 6. Tratamento de Clique no Botão de Fechar Canal de Compra
-    if (interaction.customId === 'close_purchase_channel') {
+    // 7. Tratamento de Clique no Botão de Fechar Canal de Compra (Multilíngue)
+    if (interaction.customId.startsWith('close_purchase_channel_')) {
+      const lang = interaction.customId.split('_').pop();
+      const texts = SHOP_LOCALE[lang] || SHOP_LOCALE.pt;
       try {
         await interaction.reply({
-          content: '🔒 Este canal de compra será fechado e excluído em 5 segundos...'
+          content: texts.closeWarning
         });
 
         setTimeout(async () => {
