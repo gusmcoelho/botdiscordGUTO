@@ -324,7 +324,7 @@ client.on('interactionCreate', async (interaction) => {
       // Verificar permissão de Administrador
       if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         return interaction.reply({
-          content: 'Apenas administradores podem utilizar este comando.',
+          content: 'Only administrators can use this command.',
           ephemeral: true
         });
       }
@@ -336,26 +336,26 @@ client.on('interactionCreate', async (interaction) => {
 
       if (!targetChannel || !targetChannel.isTextBased()) {
         return interaction.editReply({
-          content: `Canal de suporte inválido ou não encontrado. Verifique o ID no arquivo .env.`
+          content: `Invalid or not found support channel. Please check the ID in the .env file.`
         });
       }
 
       const supportEmbed = new EmbedBuilder()
-        .setTitle('🔑 Guto - Resgate de Chave de Teste')
+        .setTitle('🔑 Guto - Trial Key Claim')
         .setDescription(
-          'Olá! Você pode solicitar uma chave de teste grátis de **5 minutos** para experimentar o nosso produto.\n\n' +
-          '**Regras & Informações:**\n' +
-          '• Limite de no máximo **1 chave por pessoa**.\n' +
-          '• A chave expira automaticamente 5 minutos após o resgate.\n' +
-          '• O bot criará um canal de texto privado para você receber sua chave.'
+          'Hello! You can request a free 5-minute trial key to try our product.\n\n' +
+          '**Rules & Information:**\n' +
+          '• Limit of at most 1 key per person.\n' +
+          '• The key automatically expires 5 minutes after claim.\n' +
+          '• The bot will create a private text channel for you to receive your key.'
         )
         .setColor(0x5865F2)
-        .setFooter({ text: 'Sistema de Chaves Guto • Desenvolvido com Discord.js & Supabase' })
+        .setFooter({ text: 'Guto Key System • Powered by Discord.js & Supabase' })
         .setTimestamp();
 
       const claimButton = new ButtonBuilder()
         .setCustomId('claim_trial_key')
-        .setLabel('Pegar Key de 5 Minutos')
+        .setLabel('Claim 5-Minute Key')
         .setStyle(ButtonStyle.Primary)
         .setEmoji('🔑');
 
@@ -367,12 +367,12 @@ client.on('interactionCreate', async (interaction) => {
           components: [row]
         });
         await interaction.editReply({
-          content: `Painel de suporte enviado com sucesso no canal: ${targetChannel}`
+          content: `Support panel sent successfully in the channel: ${targetChannel}`
         });
       } catch (err) {
         console.error('[Bot] Erro ao enviar o painel no canal:', err);
         await interaction.editReply({
-          content: `Erro ao enviar mensagem no canal. Verifique se o bot possui as permissões necessárias.`
+          content: `Error sending message to the channel. Make sure the bot has the required permissions.`
         });
       }
     }
@@ -395,14 +395,14 @@ client.on('interactionCreate', async (interaction) => {
         if (claimFetchError) {
           console.error('[Supabase] Erro ao buscar controle de resgates:', claimFetchError);
           return interaction.editReply({
-            content: '❌ Ocorreu um erro ao consultar o controle de resgates. Por favor, certifique-se de que criou a tabela `discord_claims` no seu Supabase.'
+            content: '❌ An error occurred while checking the claims table. Please ensure you created the `discord_claims` table in your Supabase.'
           });
         }
 
         // Se houver algum registro para este Discord ID, impede o resgate
         if (claimData && claimData.length > 0) {
           return interaction.editReply({
-            content: '⚠️ Você já resgatou a sua chave de teste anteriormente! O limite é de apenas **1 chave por pessoa**.'
+            content: '⚠️ You have already claimed a trial key! The limit is only **1 key per person**.'
           });
         }
 
@@ -423,7 +423,7 @@ client.on('interactionCreate', async (interaction) => {
         if (keyInsertError) {
           console.error('[Supabase] Erro ao inserir na tabela de licenças:', keyInsertError);
           return interaction.editReply({
-            content: '❌ Não foi possível registrar sua chave na tabela de licenças. Verifique o mapeamento das colunas no arquivo .env.'
+            content: '❌ Could not register your key in the licenses table. Check the column mapping in your .env file.'
           });
         }
 
@@ -475,20 +475,20 @@ client.on('interactionCreate', async (interaction) => {
 
         // Enviar Embed no canal recém-criado com a key
         const keyEmbed = new EmbedBuilder()
-          .setTitle('🔑 Sua Key de Teste do Guto!')
-          .setDescription(`Olá ${interaction.user}, aqui está sua chave de acesso temporária para testar o **Guto**!`)
+          .setTitle('🔑 Your Guto Trial Key!')
+          .setDescription(`Hello ${interaction.user}, here is your temporary access key to test **Guto**!`)
           .setColor(0x00FF87) // HSL tailored vibrant green
           .addFields(
-            { name: 'Sua Chave', value: `\`\`\`${newKey}\`\`\`` },
-            { name: 'Duração', value: '5 Minutos', inline: true },
-            { name: 'Status', value: 'Inicia após ativação na extensão', inline: true }
+            { name: 'Your Key', value: `\`\`\`${newKey}\`\`\`` },
+            { name: 'Duration', value: '5 Minutes', inline: true },
+            { name: 'Status', value: 'Starts after activation in the extension', inline: true }
           )
-          .setFooter({ text: 'Esta chave é de uso exclusivo e expira 5 minutos após a ativação na extensão. Este canal fechará automaticamente em 4 horas.' })
+          .setFooter({ text: 'This key is for exclusive use and expires 5 minutes after activation in the extension. This channel will close automatically in 4 hours.' })
           .setTimestamp();
 
         const closeButton = new ButtonBuilder()
           .setCustomId('close_support_channel')
-          .setLabel('Fechar Canal')
+          .setLabel('Close Channel')
           .setStyle(ButtonStyle.Danger)
           .setEmoji('🔒');
 
@@ -502,7 +502,7 @@ client.on('interactionCreate', async (interaction) => {
 
         // Responder à interação original com link para o canal privado
         await interaction.editReply({
-          content: `✅ Sua chave de teste foi gerada com sucesso! Entre no seu canal privado para visualizá-la: ${privateChannel}`
+          content: `✅ Your trial key was generated successfully! Enter your private channel to view it: ${privateChannel}`
         });
 
         // Excluir o canal automaticamente em 4 horas (14.400.000 ms) como temporizador local
@@ -521,7 +521,7 @@ client.on('interactionCreate', async (interaction) => {
       } catch (err) {
         console.error('[Bot] Erro ao criar canal ou processar requisição:', err);
         await interaction.editReply({
-          content: '❌ Ocorreu um erro ao criar seu canal privado. Certifique-se de que o bot possui a permissão de **Gerenciar Canais**.'
+          content: '❌ An error occurred while creating your private channel. Make sure the bot has the **Manage Channels** permission.'
         });
       }
     }
@@ -530,7 +530,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.customId === 'close_support_channel') {
       try {
         await interaction.reply({
-          content: '🔒 Este canal de suporte será fechado e excluído em 5 segundos...'
+          content: '🔒 This support channel will be closed and deleted in 5 seconds...'
         });
 
         setTimeout(async () => {
