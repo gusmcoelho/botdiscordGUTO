@@ -825,7 +825,7 @@ const SHOP_LOCALE = {
     planLifetime: 'Lifetime - R$ 169,99',
     paymentMethod: 'How would you like to pay?',
     pixLabel: 'PIX (Brazil Only)',
-    cardLabel: 'Card / PayPal',
+    cardLabel: 'Credit Card',
     waitPayment: 'Waiting for payment confirmation...',
     paymentInstructions: '⚠️ **After payment, your key will be delivered automatically in a private channel on this server. Do not close Discord!**',
     btnPayLabel: 'Go to Payment',
@@ -858,7 +858,7 @@ const SHOP_LOCALE = {
     planLifetime: 'Vitalício - R$ 169,99',
     paymentMethod: 'Como você deseja realizar o pagamento?',
     pixLabel: 'PIX',
-    cardLabel: 'Cartão / PayPal',
+    cardLabel: 'Cartão de Crédito',
     waitPayment: 'Aguardando confirmação do pagamento...',
     paymentInstructions: '⚠️ **Após o pagamento, sua key será entregue automaticamente em um canal privado neste servidor. Não feche o Discord!**',
     btnPayLabel: 'Ir para o Pagamento',
@@ -891,7 +891,7 @@ const SHOP_LOCALE = {
     planLifetime: 'Ömür Boyu - R$ 169,99',
     paymentMethod: 'Nasıl ödeme yapmak istersiniz?',
     pixLabel: 'PIX (Brezilya)',
-    cardLabel: 'Kart / PayPal',
+    cardLabel: 'Kredi Kartı',
     waitPayment: 'Ödeme onayı bekleniyor...',
     paymentInstructions: '⚠️ **Ödemeden sonra anahtarınız bu sunucudaki özel bir kanalda otomatik olarak teslim edilecektir. Discord\'u kapatmayın!**',
     btnPayLabel: 'Ödemeye Git',
@@ -1355,37 +1355,75 @@ client.on('interactionCreate', async (interaction) => {
         const username = interaction.user.username;
 
         console.log(`[Shop] Criando ordem para ${username} (${discordId}) - Plano: ${planId}, Método: ${method}, Idioma: ${lang}`);
-        const response = await fetch(`${LOVABLE_API_BASE}/api/public/bot/create-order`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            discord_id: discordId,
-            discord_username: username,
-            plan_id: planId,
-            method: method,
-            bot_secret: DISCORD_BOT_SECRET
-          })
-        });
 
-        if (!response.ok) {
-          const errText = await response.text();
-          console.error(`[Shop] Erro da API Lovable (status ${response.status}):`, errText);
+        const PLAN_PRICES = {
+          '1day': 2000,
+          '1week': 4500,
+          '30days': 10000,
+          'lifetime': 16999
+        };
+        const amountCents = PLAN_PRICES[planId];
+        if (!amountCents) {
           return interaction.editReply({
             content: texts.errorBilling
           });
         }
 
-        const data = await response.json();
-        // Esperado: { order_id, method, payment_url, amount_brl, plan_name }
-        const { order_id: orderId, payment_url: paymentUrl, amount_brl: amountBrl, plan_name: apiPlanName } = data;
+        const planNameMap = {
+          '1day': texts.plan1Day.split(' - ')[0],
+          '1week': texts.plan1Week.split(' - ')[0],
+          '30days': texts.plan30Days.split(' - ')[0],
+          'lifetime': texts.planLifetime.split(' - ')[0]
+        };
+        const planName = planNameMap[planId] || planId;
+
+        let paymentUrl;
+        let paymentReference;
+
+        if (method === 'pix') {
+          console.log(`[Shop] Gerando pagamento PIX (LivePix) de ${amountCents} centavos...`);
+          const paymentData = await createLivePixPayment(amountCents);
+          paymentUrl = paymentData.redirectUrl;
+          paymentReference = paymentData.reference;
+        } else {
+          console.log(`[Shop] Gerando sessão Stripe de ${amountCents} centavos para ${planName}...`);
+          const session = await createStripeSession(amountCents, planName, planId, discordId);
+          paymentUrl = session.url;
+          paymentReference = session.id;
+        }
+
+        const { data: orderData, error: dbError } = await supabase
+          .from('bot_orders')
+          .insert([
+            {
+              discord_id: discordId,
+              discord_username: username,
+              plan_id: planId,
+              method: method,
+              amount_cents: amountCents,
+              status: 'pending',
+              payment_reference: paymentReference,
+              payment_url: paymentUrl
+            }
+          ])
+          .select()
+          .single();
+
+        if (dbError) {
+          console.error('[Shop] Erro ao salvar ordem no Supabase:', dbError);
+          return interaction.editReply({
+            content: texts.errorBilling
+          });
+        }
+
+        const orderId = orderData.id;
+        activeOrdersLang.set(orderId, lang);
 
         const paymentEmbed = new EmbedBuilder()
           .setTitle(`💳 ${texts.paymentMethod}`)
           .setDescription(
-            `**${apiPlanName}**\n\n` +
-            `**Valor:** R$ ${amountBrl.toFixed(2).replace('.', ',')}\n` +
+            `**${planName}**\n\n` +
+            `**Valor:** R$ ${(amountCents / 100).toFixed(2).replace('.', ',')}\n` +
             `**Método:** ${method === 'pix' ? texts.pixLabel : texts.cardLabel}\n\n` +
             `Clique no botão abaixo para ir à página de pagamento.`
           )
@@ -1434,7 +1472,7 @@ client.on('interactionCreate', async (interaction) => {
           try {
             const user = await client.users.fetch(discordId);
             if (user) {
-              await user.send(texts.paymentExpired(apiPlanName));
+              await user.send(texts.paymentExpired(planName));
             }
           } catch (dmError) {
             console.warn(`[Shop] Não foi possível enviar DM de expiração para ${username}:`, dmError.message);
