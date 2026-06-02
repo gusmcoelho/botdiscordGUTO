@@ -341,21 +341,22 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       const supportEmbed = new EmbedBuilder()
-        .setTitle('🔑 Guto - Trial Key Claim')
+        .setTitle('🔑 Guto - Trial Key Claim / Resgate de Chave de Teste')
         .setDescription(
-          'Hello! You can request a free 5-minute trial key to try our product.\n\n' +
-          '**Rules & Information:**\n' +
-          '• Limit of at most 1 key per person.\n' +
-          '• The key automatically expires 5 minutes after claim.\n' +
-          '• The bot will create a private text channel for you to receive your key.'
+          'Hello! You can request a free 5-minute trial key to try our product.\n' +
+          'Olá! Você pode solicitar uma chave de teste grátis de 5 minutos para experimentar o nosso produto.\n\n' +
+          '**Rules & Information / Regras & Informações:**\n' +
+          '• Limit of at most 1 key per person. / Limite de no máximo 1 chave por pessoa.\n' +
+          '• The key automatically expires 5 minutes after claim. / A chave expira automaticamente 5 minutos após o resgate.\n' +
+          '• The bot will create a private text channel for you to receive your key. / O bot criará um canal de texto privado para você receber sua chave.'
         )
         .setColor(0x5865F2)
-        .setFooter({ text: 'Guto Key System • Powered by Discord.js & Supabase' })
+        .setFooter({ text: 'Guto Key System / Sistema de Chaves Guto • Powered by Discord.js & Supabase' })
         .setTimestamp();
 
       const claimButton = new ButtonBuilder()
         .setCustomId('claim_trial_key')
-        .setLabel('Claim 5-Minute Key')
+        .setLabel('Claim 5-Minute Key / Pegar Key')
         .setStyle(ButtonStyle.Primary)
         .setEmoji('🔑');
 
@@ -363,6 +364,7 @@ client.on('interactionCreate', async (interaction) => {
 
       try {
         await targetChannel.send({
+          content: '@everyone',
           embeds: [supportEmbed],
           components: [row]
         });
