@@ -233,6 +233,37 @@ async function setupServerRoles() {
       console.log('[Roles] Todos os usuários e bots atuais já possuem os respectivos cargos.');
     }
 
+    // 6. Verificar/Criar cargos de idioma (English, Português, Türkçe)
+    let roleEnglish = guild.roles.cache.find(r => r.name === 'English');
+    if (!roleEnglish) {
+      await guild.roles.create({
+        name: 'English',
+        color: '#3498DB', // Azul
+        reason: 'Cargo de idioma English'
+      }).then(() => console.log('[Roles] Cargo English criado.'))
+        .catch(err => console.error('[Roles] Erro ao criar cargo English:', err));
+    }
+
+    let rolePortugues = guild.roles.cache.find(r => r.name === 'Português');
+    if (!rolePortugues) {
+      await guild.roles.create({
+        name: 'Português',
+        color: '#2ECC71', // Verde
+        reason: 'Cargo de idioma Português'
+      }).then(() => console.log('[Roles] Cargo Português criado.'))
+        .catch(err => console.error('[Roles] Erro ao criar cargo Português:', err));
+    }
+
+    let roleTurkce = guild.roles.cache.find(r => r.name === 'Türkçe');
+    if (!roleTurkce) {
+      await guild.roles.create({
+        name: 'Türkçe',
+        color: '#E74C3C', // Vermelho
+        reason: 'Cargo de idioma Türkçe'
+      }).then(() => console.log('[Roles] Cargo Türkçe criado.'))
+        .catch(err => console.error('[Roles] Erro ao criar cargo Türkçe:', err));
+    }
+
   } catch (err) {
     console.error('[Roles] Erro ao configurar cargos no servidor:', err);
   }
@@ -452,6 +483,26 @@ client.on('interactionCreate', async (interaction) => {
       const lang = interaction.customId.split('_').pop(); // 'en', 'pt', or 'tr'
       const texts = LOCALE[lang] || LOCALE.en;
       const discordId = interaction.user.id;
+      const guild = interaction.guild;
+
+      // Atribuir o cargo de idioma correspondente
+      const roleNameMap = {
+        en: 'English',
+        pt: 'Português',
+        tr: 'Türkçe'
+      };
+      const targetRoleName = roleNameMap[lang];
+      if (guild && targetRoleName) {
+        const roleToGive = guild.roles.cache.find(r => r.name === targetRoleName);
+        if (roleToGive) {
+          const member = await guild.members.fetch(discordId).catch(() => null);
+          if (member && !member.roles.cache.has(roleToGive.id)) {
+            await member.roles.add(roleToGive).catch((err) => {
+              console.error(`[Roles] Erro ao atribuir cargo ${targetRoleName} para ${member.user.tag}:`, err);
+            });
+          }
+        }
+      }
 
       try {
         // Verificar se o usuário já resgatou uma key na tabela de controle separada (discord_claims)
