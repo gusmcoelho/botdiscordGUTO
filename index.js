@@ -406,16 +406,14 @@ client.on('interactionCreate', async (interaction) => {
           });
         }
 
-        // Gerar nova chave e data de expiração (5 minutos a partir de agora)
+        // Gerar nova chave
         const newKey = generateTrialKey();
-        const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
         // 1. Salvar a nova chave na tabela de LICENÇAS principal
         const insertKeyData = {
           [COL_KEY]: newKey,
           status: 'active',
-          max_devices: 1,
-          [COL_EXPIRATION]: expiresAt.toISOString()
+          max_devices: 1
         };
 
         const { error: keyInsertError } = await supabase
@@ -475,7 +473,7 @@ client.on('interactionCreate', async (interaction) => {
           ]
         });
 
-        // Enviar Embed no canal recém-criado com a key de 5 minutos
+        // Enviar Embed no canal recém-criado com a key
         const keyEmbed = new EmbedBuilder()
           .setTitle('🔑 Sua Key de Teste do Guto!')
           .setDescription(`Olá ${interaction.user}, aqui está sua chave de acesso temporária para testar o **Guto**!`)
@@ -483,9 +481,9 @@ client.on('interactionCreate', async (interaction) => {
           .addFields(
             { name: 'Sua Chave', value: `\`\`\`${newKey}\`\`\`` },
             { name: 'Duração', value: '5 Minutos', inline: true },
-            { name: 'Expiração', value: `<t:${Math.floor(expiresAt.getTime() / 1000)}:R>`, inline: true }
+            { name: 'Status', value: 'Inicia após ativação na extensão', inline: true }
           )
-          .setFooter({ text: 'Esta chave é de uso exclusivo e expira em 5 minutos. Este canal fechará automaticamente em 4 horas.' })
+          .setFooter({ text: 'Esta chave é de uso exclusivo e expira 5 minutos após a ativação na extensão. Este canal fechará automaticamente em 4 horas.' })
           .setTimestamp();
 
         const closeButton = new ButtonBuilder()
