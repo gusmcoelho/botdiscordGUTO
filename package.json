@@ -1,7 +1,7 @@
 {
   "name": "guto-key-bot",
   "version": "1.0.0",
-  "description": "Discord Bot to generate 5-minute keys using Supabase",
+  "description": "Discord Bot to generate 30-minute keys using Supabase",
   "main": "index.js",
   "type": "module",
   "scripts": {

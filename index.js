@@ -57,11 +57,11 @@ const client = new Client({
 let lastCounterUpdate = 0;
 let pendingCounterUpdate = null;
 
-// Função geradora de chaves de teste (Formato: GUTO-5MIN-XXXXXX)
+// Função geradora de chaves de teste (Formato: GUTO-30MIN-XXXXXX)
 function generateTrialKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   const randomPart = Array.from({ length: 6 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
-  return `GUTO-5MIN-${randomPart}`;
+  return `GUTO-30MIN-${randomPart}`;
 }
 
 // Função para atualizar o contador de membros (como uma categoria no topo do servidor)
@@ -358,7 +358,7 @@ async function checkLivePixPayment(reference) {
 }
 
 // Criar uma Session de Checkout da Stripe
-async function createStripeSession(amountCents, planName, planId, discordId) {
+async function createStripeSession(amountCents, currency, planName, planId, discordId) {
   const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
     method: 'POST',
     headers: {
@@ -369,7 +369,7 @@ async function createStripeSession(amountCents, planName, planId, discordId) {
       'success_url': 'https://checkout.stripe.com/success',
       'cancel_url': 'https://checkout.stripe.com/cancel',
       'mode': 'payment',
-      'line_items[0][price_data][currency]': 'brl',
+      'line_items[0][price_data][currency]': currency.toLowerCase(),
       'line_items[0][price_data][product_data][name]': planName,
       'line_items[0][price_data][unit_amount]': amountCents.toString(),
       'line_items[0][quantity]': '1',
@@ -631,9 +631,13 @@ client.once('ready', async () => {
           {
             name: 'setup-shop',
             description: 'Envia o painel de compra de keys no canal de vendas'
+          },
+          {
+            name: 'reset-trials',
+            description: 'Reseta o resgate de chaves de teste para todos os usuários (Admin apenas)'
           }
         ]);
-        console.log(`[Bot] Comandos /setup-support e /setup-shop registrados com sucesso no servidor: ${guild.name}`);
+        console.log(`[Bot] Comandos /setup-support, /setup-shop e /reset-trials registrados com sucesso no servidor: ${guild.name}`);
         
         // Configurar e atribuir cargos
         await setupServerRoles();
@@ -712,6 +716,67 @@ client.once('ready', async () => {
           console.error('[Shop] Erro ao configurar canal #shop ou postar painel:', shopErr);
         }
 
+        // Procurar a mensagem de suporte existente no canal e atualizá-la
+        try {
+          const supportChannelId = SUPPORT_CHANNEL_ID;
+          if (supportChannelId) {
+            const supportChannel = await guild.channels.fetch(supportChannelId).catch(() => null);
+            if (supportChannel && supportChannel.isTextBased()) {
+              const supportMessages = await supportChannel.messages.fetch({ limit: 50 }).catch(() => null);
+              const existingSupportMsg = supportMessages && supportMessages.find(msg => 
+                msg.author.id === client.user.id && 
+                msg.embeds.some(e => e.title && (e.title.includes('Trial Key Claim') || e.title.includes('Resgate de Chave') || e.title.includes('Deneme Anahtarı')))
+              );
+
+              const supportEmbed = new EmbedBuilder()
+                .setTitle('🔑 Guto - Trial Key Claim / Resgate de Chave / Deneme Anahtarı')
+                .setDescription(
+                  '🇧🇷 **Português:**\n' +
+                  'Selecione seu idioma abaixo para resgatar sua chave de teste de 30 minutos.\n\n' +
+                  '──────────────────────────\n\n' +
+                  '🇺🇸 **English:**\n' +
+                  'Select your language below to claim your free 30-minute trial key.\n\n' +
+                  '──────────────────────────\n\n' +
+                  '🇹🇷 **Türkçe:**\n' +
+                  '30 dakikalık ücretsiz deneme anahtarınızı almak için aşağıdan dilinizi seçin.'
+                )
+                .setColor(0x5865F2)
+                .setFooter({ text: 'Guto Key System • Powered by Discord.js & Supabase' })
+                .setTimestamp();
+
+              const btnEn = new ButtonBuilder()
+                .setCustomId('claim_trial_key_en')
+                .setLabel('English')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🇺🇸');
+
+              const btnPt = new ButtonBuilder()
+                .setCustomId('claim_trial_key_pt')
+                .setLabel('Português')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🇧🇷');
+
+              const btnTr = new ButtonBuilder()
+                .setCustomId('claim_trial_key_tr')
+                .setLabel('Türkçe')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🇹🇷');
+
+              const row = new ActionRowBuilder().addComponents(btnEn, btnPt, btnTr);
+
+              if (existingSupportMsg) {
+                await existingSupportMsg.edit({
+                  embeds: [supportEmbed],
+                  components: [row]
+                });
+                console.log('[Support] Mensagem de suporte existente editada e atualizada para 30 minutos.');
+              }
+            }
+          }
+        } catch (supportErr) {
+          console.error('[Support] Erro ao buscar/editar mensagem de suporte:', supportErr);
+        }
+
         // Executar uma limpeza inicial de canais órfãos antigos ao ligar o bot
         await cleanupOldTrialChannels();
 
@@ -781,10 +846,10 @@ const LOCALE = {
     embedDesc: (user) => `Hello ${user}, here is your temporary access key to test **Guto**!`,
     fieldKey: 'Your Key',
     fieldDuration: 'Duration',
-    fieldDurationVal: '5 Minutes',
+    fieldDurationVal: '30 Minutes',
     fieldStatus: 'Status',
     fieldStatusVal: 'Starts after activation in the extension',
-    embedFooter: 'This key is for exclusive use and expires 5 minutes after activation in the extension. This channel will close automatically in 4 hours.',
+    embedFooter: 'This key is for exclusive use and expires 30 minutes after activation in the extension. This channel will close automatically in 4 hours.',
     closeLabel: 'Close Channel',
     successReply: (channel) => `✅ Your trial key was generated successfully! Enter your private channel to view it: ${channel}`,
     closeWarning: '🔒 This support channel will be closed and deleted in 5 seconds...'
@@ -798,10 +863,10 @@ const LOCALE = {
     embedDesc: (user) => `Olá ${user}, aqui está sua chave de acesso temporária para testar o **Guto**!`,
     fieldKey: 'Sua Chave',
     fieldDuration: 'Duração',
-    fieldDurationVal: '5 Minutos',
+    fieldDurationVal: '30 Minutos',
     fieldStatus: 'Status',
     fieldStatusVal: 'Inicia após ativação na extensão',
-    embedFooter: 'Esta chave é de uso exclusivo e expira 5 minutos após a ativação na extensão. Este canal fechará automaticamente em 4 horas.',
+    embedFooter: 'Esta chave é de uso exclusivo e expira 30 minutos após a ativação na extensão. Este canal fechará automaticamente em 4 horas.',
     closeLabel: 'Fechar Canal',
     successReply: (channel) => `✅ Sua chave de teste foi gerada com sucesso! Entre no seu canal privado para visualizá-la: ${channel}`,
     closeWarning: '🔒 Este canal de suporte será fechado e excluído em 5 segundos...'
@@ -815,23 +880,23 @@ const LOCALE = {
     embedDesc: (user) => `Merhaba ${user}, **Guto**'yu test etmeniz için geçici erişim anahtarınız burada!`,
     fieldKey: 'Anahtarınız',
     fieldDuration: 'Süre',
-    fieldDurationVal: '5 Dakika',
+    fieldDurationVal: '30 Dakika',
     fieldStatus: 'Durum',
     fieldStatusVal: 'Uzantıda etkinleştirildikten sonra başlar',
-    embedFooter: 'Bu anahtar kişiye özeldir ve uzantıda etkinleştirildikten 5 dakika sonra sona erer. Bu kanal 4 saat içinde otomatik olarak kapatılacaktır.',
+    embedFooter: 'Bu anahtar kişiye özeldir ve uzantıda etkinleştirildikten 30 dakika sonra sona erer. Bu kanal 4 saat içinde otomatik olarak kapatılacaktır.',
     closeLabel: 'Kanalı Kapat',
     successReply: (channel) => `✅ Deneme anahtarınız başarıyla oluşturuldu! Görüntülemek için özel kanalınıza gidin: ${channel}`,
-    closeWarning: '🔒 Bu destek kanalı 5 saniye içinde kapatılacak ve silinecektir...'
+    closeWarning: '🔒 Bu destek kanalı 5 saniye içinde kapatılacak e silinecektir...'
   }
 };
 
 const SHOP_LOCALE = {
   en: {
     choosePlan: '🛒 **Choose your Plan**',
-    plan1Day: '1 Day - R$ 20',
-    plan1Week: '1 Week - R$ 45',
-    plan30Days: '30 Days - R$ 100',
-    planLifetime: 'Lifetime - R$ 169,99',
+    plan1Day: '1 Day - $ 4.00',
+    plan1Week: '1 Week - $ 9.00',
+    plan30Days: '30 Days - $ 20.00',
+    planLifetime: 'Lifetime - $ 34.00',
     paymentMethod: 'How would you like to pay?',
     pixLabel: 'PIX (Brazil Only)',
     cardLabel: 'Credit Card',
@@ -894,10 +959,10 @@ const SHOP_LOCALE = {
   },
   tr: {
     choosePlan: '🛒 **Planınızı Seçin**',
-    plan1Day: '1 Günlük - R$ 20',
-    plan1Week: '1 Haftalık - R$ 45',
-    plan30Days: '30 Günlük - R$ 100',
-    planLifetime: 'Ömür Boyu - R$ 169,99',
+    plan1Day: '1 Gün - $ 4.00',
+    plan1Week: '1 Hafta - $ 9.00',
+    plan30Days: '30 Gün - $ 20.00',
+    planLifetime: 'Ömür Boyu - $ 34.00',
     paymentMethod: 'Nasıl ödeme yapmak istersiniz?',
     pixLabel: 'PIX (Brezilya)',
     cardLabel: 'Kredi Kartı',
@@ -924,6 +989,43 @@ const SHOP_LOCALE = {
     dmTitle: '✅ Ödeme onaylandı - Guto Pingo!',
     dmDesc: (planName) => `Satın aldığınız için teşekkürler! İşte **${planName}** planı anahtarınız:`,
     closeWarning: '🔒 Bu satın alma kanalı 5 saniye içinde kapatılacak ve silinecektir...'
+  }
+};
+
+const PLAN_PRICES = {
+  pt: {
+    '1day': { amount: 2000, currency: 'BRL' },
+    '1week': { amount: 4500, currency: 'BRL' },
+    '30days': { amount: 10000, currency: 'BRL' },
+    'lifetime': { amount: 16999, currency: 'BRL' }
+  },
+  en: {
+    stripe: {
+      '1day': { amount: 400, currency: 'USD' },
+      '1week': { amount: 900, currency: 'USD' },
+      '30days': { amount: 2000, currency: 'USD' },
+      'lifetime': { amount: 3400, currency: 'USD' }
+    },
+    pix: {
+      '1day': { amount: 2000, currency: 'BRL' },
+      '1week': { amount: 4500, currency: 'BRL' },
+      '30days': { amount: 10000, currency: 'BRL' },
+      'lifetime': { amount: 17000, currency: 'BRL' }
+    }
+  },
+  tr: {
+    stripe: {
+      '1day': { amount: 400, currency: 'USD' },
+      '1week': { amount: 900, currency: 'USD' },
+      '30days': { amount: 2000, currency: 'USD' },
+      'lifetime': { amount: 3400, currency: 'USD' }
+    },
+    pix: {
+      '1day': { amount: 2000, currency: 'BRL' },
+      '1week': { amount: 4500, currency: 'BRL' },
+      '30days': { amount: 10000, currency: 'BRL' },
+      'lifetime': { amount: 17000, currency: 'BRL' }
+    }
   }
 };
 
@@ -954,13 +1056,13 @@ client.on('interactionCreate', async (interaction) => {
         .setTitle('🔑 Guto - Trial Key Claim / Resgate de Chave / Deneme Anahtarı')
         .setDescription(
           '🇧🇷 **Português:**\n' +
-          'Selecione seu idioma abaixo para resgatar sua chave de teste de 5 minutos.\n\n' +
+          'Selecione seu idioma abaixo para resgatar sua chave de teste de 30 minutos.\n\n' +
           '──────────────────────────\n\n' +
           '🇺🇸 **English:**\n' +
-          'Select your language below to claim your free 5-minute trial key.\n\n' +
+          'Select your language below to claim your free 30-minute trial key.\n\n' +
           '──────────────────────────\n\n' +
           '🇹🇷 **Türkçe:**\n' +
-          '5 dakikalık ücretsiz deneme anahtarınızı almak için aşağıdan dilinizi seçin.'
+          '30 dakikalık ücretsiz deneme anahtarınızı almak için aşağıdan dilinizi seçin.'
         )
         .setColor(0x5865F2)
         .setFooter({ text: 'Guto Key System • Powered by Discord.js & Supabase' })
@@ -1022,40 +1124,40 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       const shopEmbed = new EmbedBuilder()
-        .setTitle('🛒 GUTO PINGO - Comprar Key')
+        .setTitle('🛒 GUTO PINGO - Shop / Loja / Dükkan')
         .setDescription(
-          'Selecione um plano abaixo para adquirir sua chave de acesso ao **Guto Pingo**.\n\n' +
-          'Após o pagamento, um canal privado será criado automaticamente para entregar sua chave de licença.'
+          '🇧🇷 **Português:**\n' +
+          'Selecione seu idioma abaixo para comprar uma chave.\n\n' +
+          '──────────────────────────\n\n' +
+          '🇺🇸 **English:**\n' +
+          'Select your language below to buy a key.\n\n' +
+          '──────────────────────────\n\n' +
+          '🇹🇷 **Türkçe:**\n' +
+          'Anahtar satın almak için aşağıdan dilinizi seçin.'
         )
-        .setColor(0x00FF87) // Premium vibrant green
-        .setFooter({ text: 'Sistema de Vendas Guto Pingo • Pagamento seguro' })
+        .setColor(0x00FF87)
+        .setFooter({ text: 'Guto Pingo Sales System' })
         .setTimestamp();
 
-      const btn1Day = new ButtonBuilder()
-        .setCustomId('buy_plan_1day')
-        .setLabel('1 Dia - R$ 20')
+      const btnEn = new ButtonBuilder()
+        .setCustomId('buy_lang_en')
+        .setLabel('English')
         .setStyle(ButtonStyle.Primary)
-        .setEmoji('🌅');
+        .setEmoji('🇺🇸');
 
-      const btn1Week = new ButtonBuilder()
-        .setCustomId('buy_plan_1week')
-        .setLabel('1 Semana - R$ 45')
+      const btnPt = new ButtonBuilder()
+        .setCustomId('buy_lang_pt')
+        .setLabel('Português')
         .setStyle(ButtonStyle.Primary)
-        .setEmoji('📅');
+        .setEmoji('🇧🇷');
 
-      const btn30Days = new ButtonBuilder()
-        .setCustomId('buy_plan_30days')
-        .setLabel('30 Dias - R$ 100')
+      const btnTr = new ButtonBuilder()
+        .setCustomId('buy_lang_tr')
+        .setLabel('Türkçe')
         .setStyle(ButtonStyle.Primary)
-        .setEmoji('🗓️');
+        .setEmoji('🇹🇷');
 
-      const btnLifetime = new ButtonBuilder()
-        .setCustomId('buy_plan_lifetime')
-        .setLabel('Vitalício - R$ 169,99')
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('👑');
-
-      const row = new ActionRowBuilder().addComponents(btn1Day, btn1Week, btn30Days, btnLifetime);
+      const row = new ActionRowBuilder().addComponents(btnEn, btnPt, btnTr);
 
       try {
         await targetChannel.send({
@@ -1069,6 +1171,39 @@ client.on('interactionCreate', async (interaction) => {
         console.error('[Shop] Erro ao enviar o painel no canal:', err);
         await interaction.editReply({
           content: `Erro ao enviar mensagem ao canal. Certifique-se de que o bot possui as permissões necessárias.`
+        });
+      }
+    } else if (interaction.commandName === 'reset-trials') {
+      // Verificar permissão de Administrador
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        return interaction.reply({
+          content: 'Somente administradores podem usar este comando.',
+          ephemeral: true
+        });
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+
+      try {
+        const { error } = await supabase
+          .from(CLAIMS_TABLE)
+          .delete()
+          .neq('discord_id', '0');
+
+        if (error) {
+          console.error('[Supabase] Erro ao resetar chaves:', error);
+          return interaction.editReply({
+            content: `❌ Erro ao deletar registros do Supabase: ${error.message}`
+          });
+        }
+
+        await interaction.editReply({
+          content: '✅ Todas as chaves de teste foram resetadas com sucesso! Todos os usuários já podem resgatar novamente.'
+        });
+      } catch (err) {
+        console.error('[Bot] Erro ao executar reset-trials:', err);
+        await interaction.editReply({
+          content: '❌ Ocorreu um erro ao tentar resetar as chaves no banco de dados.'
         });
       }
     }
@@ -1324,28 +1459,150 @@ client.on('interactionCreate', async (interaction) => {
       };
       const planName = planNameMap[planId] || planId;
 
-      const btnPix = new ButtonBuilder()
-        .setCustomId(`pay_method_pix_${planId}_${lang}`)
-        .setLabel(texts.pixLabel)
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('🇧🇷');
+      if (lang === 'en' || lang === 'tr') {
+        // Direct Stripe payment generation in USD for international users
+        try {
+          await interaction.deferReply({ ephemeral: true });
 
-      const btnStripe = new ButtonBuilder()
-        .setCustomId(`pay_method_stripe_${planId}_${lang}`)
-        .setLabel(texts.cardLabel)
-        .setStyle(ButtonStyle.Primary)
-        .setEmoji('💳');
+          const discordId = interaction.user.id;
+          const username = interaction.user.username;
 
-      const row = new ActionRowBuilder().addComponents(btnPix, btnStripe);
+          console.log(`[Shop] Criando ordem direta Stripe para ${username} (${discordId}) - Plano: ${planId}, Idioma: ${lang}`);
 
-      try {
-        await interaction.reply({
-          content: `${texts.paymentMethod}\n*(Plan: **${planName}**)*`,
-          components: [row],
-          ephemeral: true
-        });
-      } catch (err) {
-        console.error('[Shop] Erro ao responder seleção de plano:', err);
+          const priceInfo = PLAN_PRICES[lang]['stripe'][planId];
+          if (!priceInfo) {
+            return interaction.editReply({
+              content: texts.errorBilling
+            });
+          }
+
+          const amountCents = priceInfo.amount;
+          const currency = priceInfo.currency;
+
+          console.log(`[Shop] Gerando sessão Stripe (${currency}) de ${amountCents} centavos para ${planName}...`);
+          const session = await createStripeSession(amountCents, currency, planName, planId, discordId);
+          const paymentUrl = session.url;
+          const paymentReference = session.id;
+
+          const { data: orderData, error: dbError } = await supabase
+            .from('bot_orders')
+            .insert([
+              {
+                discord_id: discordId,
+                discord_username: username,
+                plan_id: planId,
+                method: 'stripe',
+                amount_cents: amountCents,
+                status: 'pending',
+                payment_reference: paymentReference,
+                payment_url: paymentUrl
+              }
+            ])
+            .select()
+            .single();
+
+          if (dbError) {
+            console.error('[Shop] Erro ao salvar ordem no Supabase:', dbError);
+            return interaction.editReply({
+              content: texts.errorBilling
+            });
+          }
+
+          const orderId = orderData.id;
+          activeOrdersLang.set(orderId, lang);
+
+          const formattedAmount = `$ ${(amountCents / 100).toFixed(2)}`;
+
+          const paymentEmbed = new EmbedBuilder()
+            .setTitle(`💳 ${texts.paymentMethod}`)
+            .setDescription(
+              `**${planName}**\n\n` +
+              `**Price:** ${formattedAmount}\n` +
+              `**Method:** ${texts.cardLabel}\n\n` +
+              `Click the button below to go to the payment page.`
+            )
+            .setColor(0xF1C40F)
+            .setFooter({ text: texts.waitPayment })
+            .setTimestamp();
+
+          const btnPay = new ButtonBuilder()
+            .setLabel(texts.btnPayLabel)
+            .setURL(paymentUrl)
+            .setStyle(ButtonStyle.Link);
+
+          const payRow = new ActionRowBuilder().addComponents(btnPay);
+
+          await interaction.editReply({
+            content: texts.paymentInstructions,
+            embeds: [paymentEmbed],
+            components: [payRow]
+          });
+
+          // Configurar inscrição no Supabase Realtime para esta ordem
+          console.log(`[Realtime] Inscrevendo no canal bot_order_${orderId} para o usuário ${username}`);
+          
+          let timeout;
+
+          const channel = supabase
+            .channel(`bot_order_${orderId}`)
+            .on('postgres_changes',
+              { event: 'UPDATE', schema: 'public', table: 'bot_orders', filter: `id=eq.${orderId}` },
+              async (payload) => {
+                console.log(`[Realtime] Update detectado na ordem ${orderId}. Status: ${payload.new.status}`);
+                if (payload.new.status === 'paid' && payload.new.license_key) {
+                  clearTimeout(timeout);
+                  channel.unsubscribe();
+                  console.log(`[Realtime] Ordem ${orderId} foi paga. Iniciando entrega.`);
+                  await deliverKey(payload.new, lang);
+                }
+              })
+            .subscribe((status) => {
+              console.log(`[Realtime] Subscription status para canal bot_order_${orderId}: ${status}`);
+            });
+
+          timeout = setTimeout(async () => {
+            channel.unsubscribe();
+            console.log(`[Realtime] Inscrição da ordem ${orderId} expirou por timeout (30 minutos).`);
+            try {
+              const user = await client.users.fetch(discordId);
+              if (user) {
+                await user.send(texts.paymentExpired(planName));
+              }
+            } catch (dmError) {
+              console.warn(`[Shop] Não foi possível enviar DM de expiração para ${username}:`, dmError.message);
+            }
+          }, 30 * 60 * 1000);
+
+        } catch (err) {
+          console.error('[Shop] Erro de conexão/API ao processar pagamento:', err);
+          return interaction.editReply({
+            content: texts.errorConnection
+          });
+        }
+      } else {
+        const btnPix = new ButtonBuilder()
+          .setCustomId(`pay_method_pix_${planId}_${lang}`)
+          .setLabel(texts.pixLabel)
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('🇧🇷');
+
+        const btnStripe = new ButtonBuilder()
+          .setCustomId(`pay_method_stripe_${planId}_${lang}`)
+          .setLabel(texts.cardLabel)
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('💳');
+
+        const row = new ActionRowBuilder().addComponents(btnPix, btnStripe);
+
+        try {
+          await interaction.reply({
+            content: `${texts.paymentMethod}\n*(Plan: **${planName}**)*`,
+            components: [row],
+            ephemeral: true
+          });
+        } catch (err) {
+          console.error('[Shop] Erro ao responder seleção de plano:', err);
+        }
       }
     }
 
@@ -1365,18 +1622,21 @@ client.on('interactionCreate', async (interaction) => {
 
         console.log(`[Shop] Criando ordem para ${username} (${discordId}) - Plano: ${planId}, Método: ${method}, Idioma: ${lang}`);
 
-        const PLAN_PRICES = {
-          '1day': 2000,
-          '1week': 4500,
-          '30days': 10000,
-          'lifetime': 16999
-        };
-        const amountCents = PLAN_PRICES[planId];
-        if (!amountCents) {
+        let priceInfo;
+        if (lang === 'pt') {
+          priceInfo = PLAN_PRICES.pt[planId];
+        } else {
+          priceInfo = PLAN_PRICES[lang][method][planId];
+        }
+
+        if (!priceInfo) {
           return interaction.editReply({
             content: texts.errorBilling
           });
         }
+
+        const amountCents = priceInfo.amount;
+        const currency = priceInfo.currency;
 
         const planNameMap = {
           '1day': texts.plan1Day.split(' - ')[0],
@@ -1395,8 +1655,8 @@ client.on('interactionCreate', async (interaction) => {
           paymentUrl = paymentData.redirectUrl;
           paymentReference = paymentData.reference;
         } else {
-          console.log(`[Shop] Gerando sessão Stripe de ${amountCents} centavos para ${planName}...`);
-          const session = await createStripeSession(amountCents, planName, planId, discordId);
+          console.log(`[Shop] Gerando sessão Stripe (${currency}) de ${amountCents} centavos para ${planName}...`);
+          const session = await createStripeSession(amountCents, currency, planName, planId, discordId);
           paymentUrl = session.url;
           paymentReference = session.id;
         }
@@ -1428,11 +1688,16 @@ client.on('interactionCreate', async (interaction) => {
         const orderId = orderData.id;
         activeOrdersLang.set(orderId, lang);
 
+        const currencySymbol = currency === 'USD' ? '$' : 'R$';
+        const formattedAmount = currency === 'USD'
+          ? `${currencySymbol} ${(amountCents / 100).toFixed(2)}`
+          : `${currencySymbol} ${(amountCents / 100).toFixed(2).replace('.', ',')}`;
+
         const paymentEmbed = new EmbedBuilder()
           .setTitle(`💳 ${texts.paymentMethod}`)
           .setDescription(
             `**${planName}**\n\n` +
-            `**Valor:** R$ ${(amountCents / 100).toFixed(2).replace('.', ',')}\n` +
+            `**Valor:** ${formattedAmount}\n` +
             `**Método:** ${method === 'pix' ? texts.pixLabel : texts.cardLabel}\n\n` +
             `Clique no botão abaixo para ir à página de pagamento.`
           )

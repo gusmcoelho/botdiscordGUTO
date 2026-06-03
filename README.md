@@ -1,6 +1,6 @@
 # 🔑 Guto Trial Key - Discord Bot
 
-Este é um bot do Discord feito em Node.js com `discord.js` e integrado ao Supabase para gerenciar a distribuição de chaves (keys) de teste de 5 minutos, limitando a **uma chave por pessoa**.
+Este é um bot do Discord feito em Node.js com `discord.js` e integrado ao Supabase para gerenciar a distribuição de chaves (keys) de teste de 30 minutos, limitando a **uma chave por pessoa**.
 
 ---
 
@@ -95,7 +95,7 @@ npm start
 ### ⚙️ Inicializando o Painel de Suporte
 Uma vez que o bot esteja rodando e conectado ao seu servidor:
 1. Digite o comando `/setup-support` em qualquer canal de texto do servidor.
-2. O bot enviará uma mensagem em estilo Embed com o botão **Pegar Key de 5 Minutos** no canal configurado em `SUPPORT_CHANNEL_ID` (ou no canal atual caso não esteja configurado).
+2. O bot enviará uma mensagem em estilo Embed com o botão **Pegar Key de 30 Minutos** no canal configurado em `SUPPORT_CHANNEL_ID` (ou no canal atual caso não esteja configurado).
 3. Pronto! Quando os usuários clicarem no botão, o bot criará um canal temporário e enviará a chave de teste gerada.
 
 ### 🛒 Inicializando o Painel de Compras (Sistema de Vendas)
@@ -115,14 +115,14 @@ Uma vez que o bot esteja rodando e conectado ao seu servidor:
 
 ```mermaid
 sequenceDiagram
-    User->>Bot: Clica em "Pegar Key de 5 Minutos"
+    User->>Bot: Clica em "Pegar Key de 30 Minutos"
     Bot->>Supabase: Consulta se existe discord_id
     alt Já possui chave
         Supabase-->>Bot: Retorna registro existente
         Bot-->>User: Alerta ephemeral (Limite Excedido)
     else Não possui chave
         Supabase-->>Bot: Retorna vazio
-        Bot->>Bot: Gera chave GUTO-5MIN-XXXXXX
+        Bot->>Bot: Gera chave GUTO-30MIN-XXXXXX
         Bot->>Supabase: Salva chave e discord_id
         Bot->>Discord: Cria Canal Privado para o Usuário
         Bot->>Discord: Envia Key + Botão de Fechar Canal
