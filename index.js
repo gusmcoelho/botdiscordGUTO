@@ -466,6 +466,31 @@ async function setupAnnouncementsAndReferral(guild) {
       });
       console.log('[Announcements] Anúncio do sistema de indicação enviado com @everyone.');
     }
+
+    // 3. Criar canal geral de conversa (se não existir)
+    const geralExists = guild.channels.cache.find(
+      c => c.type === ChannelType.GuildText &&
+      (c.name === '💬・geral' || c.name === 'geral' || c.name === 'general' || c.name === 'chat-geral')
+    );
+
+    if (!geralExists) {
+      await guild.channels.create({
+        name: '💬・geral',
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+          {
+            id: guild.id, // @everyone pode ver, ler e enviar mensagens
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory,
+              PermissionFlagsBits.AddReactions
+            ]
+          }
+        ]
+      });
+      console.log('[Geral] Canal 💬・geral criado com sucesso.');
+    }
   } catch (err) {
     console.error('[Announcements] Erro ao configurar canal de anúncios:', err);
   }
