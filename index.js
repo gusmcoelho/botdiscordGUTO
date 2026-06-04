@@ -1,3 +1,4 @@
+// v1.1.0 - Payment API integration (Stripe + LivePix)
 import {
   Client,
   GatewayIntentBits,
