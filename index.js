@@ -434,28 +434,43 @@ async function setupAnnouncementsAndReferral(guild) {
       console.log('[Announcements] Canal 📢・anúncios criado.');
     }
 
-    // 2. Verificar se o anúncio de indicação já foi postado
+    // 2. Verificar se o anúncio ATUALIZADO de indicação já foi postado
     const msgs = await announcementsChannel.messages.fetch({ limit: 30 }).catch(() => null);
     const alreadyPosted = msgs && msgs.some(
-      m => m.author.id === client.user.id && m.embeds.some(e => e.title && e.title.includes('Indicação'))
+      m => m.author.id === client.user.id && m.embeds.some(e => e.title && e.title.includes('Indicação') && e.description && e.description.includes('4 dias'))
     );
 
     if (!alreadyPosted) {
       const referralEmbed = new EmbedBuilder()
         .setTitle('🎁 Sistema de Indicação / Referral System')
         .setDescription(
-          '🇧🇷 **Português:**\n' +
-          'Convide **5 amigos** para o servidor usando seu link exclusivo e ganhe uma **Key de 2 dias GRÁTIS!**\n' +
-          'Use o comando `/meulink` para pegar seu link pessoal e ver seu progresso.\n\n' +
-          '──────────────────────────\n\n' +
-          '🇺🇸 **English:**\n' +
-          'Invite **5 friends** to the server using your exclusive link and get a **FREE 2-day Key!**\n' +
-          'Use the `/mylink` command to get your personal invite link and check your progress.'
+          '🇧🇷 **Português — Como ganhar keys GRÁTIS:**\n' +
+          'Use `/meulink` para pegar seu link exclusivo e compartilhe com amigos!\n\n' +
+          '🇺🇸 **English — How to earn FREE keys:**\n' +
+          'Use `/mylink` to get your exclusive link and share it with friends!'
         )
         .setColor(0x00FF87)
         .addFields(
-          { name: '🇧🇷 Como funciona?', value: '1. Use `/meulink` para gerar seu link\n2. Compartilhe com seus amigos\n3. Quando 5 entrarem, você recebe a key automaticamente por DM!', inline: true },
-          { name: '🇺🇸 How it works?', value: '1. Use `/mylink` to generate your link\n2. Share it with your friends\n3. When 5 join, you receive the key automatically via DM!', inline: true }
+          {
+            name: '🏆 Recompensa 1 / Reward 1',
+            value: '🇧🇷 Convide **5 amigos** → Ganhe **Key de 2 dias** 🎁\n🇺🇸 Invite **5 friends** → Get a **2-day Key** 🎁',
+            inline: false
+          },
+          {
+            name: '💎 Recompensa 2 / Reward 2',
+            value: '🇧🇷 Seu indicado comprar **1 semana ou mais** → Ganhe **Key de 4 dias** 🎁\n🇺🇸 Your referral buys **1 week or more** → Get a **4-day Key** 🎁',
+            inline: false
+          },
+          {
+            name: '🇧🇷 Como usar?',
+            value: '1. Use `/meulink`\n2. Compartilhe o link\n3. Receba as keys automaticamente por DM!',
+            inline: true
+          },
+          {
+            name: '🇺🇸 How to use?',
+            value: '1. Use `/mylink`\n2. Share your link\n3. Receive keys automatically via DM!',
+            inline: true
+          }
         )
         .setFooter({ text: 'Guto Pingo Referral System • Powered by Discord.js & Supabase' })
         .setTimestamp();
@@ -466,6 +481,7 @@ async function setupAnnouncementsAndReferral(guild) {
       });
       console.log('[Announcements] Anúncio do sistema de indicação enviado com @everyone.');
     }
+
 
     // 3. Criar canal geral de conversa (se não existir)
     const geralExists = guild.channels.cache.find(
