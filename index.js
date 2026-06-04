@@ -274,7 +274,60 @@ async function deliverKey(orderRow, lang = 'pt') {
       console.warn(`[Delivery] Não foi possível enviar a key por DM para ${username}:`, dmError.message);
     }
 
-    // 5. Agendar exclusão automática do canal em 4 horas (14.400.000 ms)
+    // 5. Verificar recompensa de compra por indicação (planos 1week, 30days, lifetime)
+    const qualifyingPlans = ['1week', '30days', 'lifetime'];
+    if (qualifyingPlans.includes(planId)) {
+      try {
+        const { data: referralRow } = await supabase
+          .from('referral_members')
+          .select('*')
+          .eq('discord_id', discordId)
+          .eq('purchase_rewarded', false)
+          .maybeSingle();
+
+        if (referralRow) {
+          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+          const seg = () => Array.from({ length: 6 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+          const purchaseRewardKey = `GUTO-4DAYS-${seg()}`;
+
+          // Insere a key de 4 dias na tabela de licenças
+          await supabase.from(SUPABASE_TABLE).insert([{ [COL_KEY]: purchaseRewardKey, status: 'active', max_devices: 1 }]);
+
+          // Marca como recompensado
+          await supabase.from('referral_members').update({ purchase_rewarded: true }).eq('discord_id', discordId);
+
+          console.log(`[Referral] 🎁 Compra qualificada! Referidor ${referralRow.referred_by_discord_id} ganhou key 4 dias: ${purchaseRewardKey}`);
+
+          // Envia DM para o referidor
+          try {
+            const referrer = await client.users.fetch(referralRow.referred_by_discord_id);
+            const purchaseRewardEmbed = new EmbedBuilder()
+              .setTitle('🎁 Seu indicado fez uma compra! / Your referral made a purchase!')
+              .setDescription(
+                `🇧🇷 Um amigo que você indicou comprou um plano de **1 semana ou mais**!\nAqui está sua recompensa de **4 dias grátis**!\n\n` +
+                `🇺🇸 A friend you referred purchased a plan of **1 week or more**!\nHere is your **4-day free reward**!`
+              )
+              .setColor(0xF1C40F)
+              .addFields(
+                { name: '🔑 Sua Chave / Your Key', value: `\`\`\`${purchaseRewardKey}\`\`\`` },
+                { name: '⏰ Validade / Validity', value: '4 Dias / 4 Days', inline: true },
+                { name: '📦 Tipo / Type', value: 'Purchase Referral Reward', inline: true }
+              )
+              .setFooter({ text: 'Guto Pingo Referral System • Obrigado por indicar amigos!' })
+              .setTimestamp();
+
+            await referrer.send({ embeds: [purchaseRewardEmbed] });
+            console.log(`[Referral] DM de recompensa de compra enviada para ${referralRow.referred_by_discord_id}.`);
+          } catch (dmRefErr) {
+            console.warn(`[Referral] Não foi possível enviar DM de recompensa de compra:`, dmRefErr.message);
+          }
+        }
+      } catch (purchaseRefErr) {
+        console.error('[Referral] Erro ao processar recompensa de compra:', purchaseRefErr.message);
+      }
+    }
+
+    // 6. Agendar exclusão automática do canal em 4 horas (14.400.000 ms)
     setTimeout(async () => {
       try {
         const currentChannel = guild.channels.cache.get(privateChannel.id);
@@ -999,6 +1052,14 @@ client.on('guildMemberAdd', async (member) => {
               .eq('invite_code', usedCode);
 
             console.log(`[Referral] ${inviteRow.discord_username} agora tem ${newCount}/5 indicações.`);
+
+            // Registra que este membro foi indicado por inviteRow.discord_id
+            await supabase.from('referral_members').upsert({
+              discord_id: member.user.id,
+              referred_by_discord_id: inviteRow.discord_id,
+              referred_by_invite_code: usedCode,
+              purchase_rewarded: false
+            }, { onConflict: 'discord_id' });
 
             if (newCount >= 5) {
               // Gera a key de 2 dias
