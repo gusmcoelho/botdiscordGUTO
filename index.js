@@ -35,6 +35,9 @@ if (DISCORD_TOKEN) {
 
 const activeOrdersLang = new Map();
 
+// Cache de convites: code -> uses (para rastrear quem trouxe quem)
+const inviteCache = new Map();
+
 // Mapeamento dinâmico de Banco de Dados
 const SUPABASE_TABLE = process.env.SUPABASE_TABLE || 'licenses';
 const COL_KEY = process.env.COL_KEY || 'key';
@@ -286,6 +289,132 @@ async function deliverKey(orderRow, lang = 'pt') {
 
   } catch (err) {
     console.error(`[Delivery] Erro crítico ao entregar key para o usuário ${username} (${discordId}):`, err);
+  }
+}
+
+// --- Sistema de Indicação (Referral) ---
+
+// Popula o cache de convites da guild
+async function cacheGuildInvites(guild) {
+  try {
+    const invites = await guild.invites.fetch();
+    inviteCache.clear();
+    invites.forEach(inv => inviteCache.set(inv.code, inv.uses));
+    console.log(`[Referral] Cache de convites atualizado: ${inviteCache.size} convite(s).`);
+  } catch (err) {
+    console.error('[Referral] Erro ao buscar convites:', err.message);
+  }
+}
+
+// Busca ou cria o invite exclusivo de um usuário
+async function getUserInviteRow(guild, discordId, discordUsername) {
+  // Verifica se já existe no Supabase
+  const { data: existing } = await supabase
+    .from('invite_tracking')
+    .select('*')
+    .eq('discord_id', discordId)
+    .maybeSingle();
+
+  if (existing) {
+    // Confirma se o invite ainda existe no Discord
+    try {
+      const invites = await guild.invites.fetch();
+      if (invites.has(existing.invite_code)) return existing;
+    } catch {}
+  }
+
+  // Cria novo invite num canal de texto público
+  const channel = guild.channels.cache.find(
+    c => c.type === ChannelType.GuildText &&
+    !['trial-', 'compra-', 'purchase-', 'satinalma-'].some(p => c.name.startsWith(p))
+  );
+  if (!channel) throw new Error('Nenhum canal disponível para criar convite.');
+
+  const invite = await channel.createInvite({
+    maxAge: 0,
+    maxUses: 0,
+    unique: true,
+    reason: `Convite de indicação para ${discordUsername}`
+  });
+
+  const { data: newRow } = await supabase
+    .from('invite_tracking')
+    .upsert({
+      discord_id: discordId,
+      discord_username: discordUsername,
+      invite_code: invite.code,
+      uses_count: 0,
+      rewarded: false
+    }, { onConflict: 'discord_id' })
+    .select()
+    .single();
+
+  inviteCache.set(invite.code, 0);
+  return newRow;
+}
+
+// Cria (ou reutiliza) o canal de anúncios e posta o embed do sistema de indicação
+async function setupAnnouncementsAndReferral(guild) {
+  try {
+    // 1. Encontrar ou criar canal de anúncios
+    let announcementsChannel = guild.channels.cache.find(
+      c => c.type === ChannelType.GuildText &&
+      (c.name === '📢・anúncios' || c.name === 'anuncios' || c.name === 'announcements' || c.name === 'anúncios')
+    );
+
+    if (!announcementsChannel) {
+      announcementsChannel = await guild.channels.create({
+        name: '📢・anúncios',
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+          {
+            id: guild.id,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+            deny: [PermissionFlagsBits.SendMessages]
+          },
+          {
+            id: client.user.id,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.MentionEveryone]
+          }
+        ]
+      });
+      console.log('[Announcements] Canal 📢・anúncios criado.');
+    }
+
+    // 2. Verificar se o anúncio de indicação já foi postado
+    const msgs = await announcementsChannel.messages.fetch({ limit: 30 }).catch(() => null);
+    const alreadyPosted = msgs && msgs.some(
+      m => m.author.id === client.user.id && m.embeds.some(e => e.title && e.title.includes('Indicação'))
+    );
+
+    if (!alreadyPosted) {
+      const referralEmbed = new EmbedBuilder()
+        .setTitle('🎁 Sistema de Indicação / Referral System')
+        .setDescription(
+          '🇧🇷 **Português:**\n' +
+          'Convide **5 amigos** para o servidor usando seu link exclusivo e ganhe uma **Key de 2 dias GRÁTIS!**\n' +
+          'Use o comando `/meulink` para pegar seu link pessoal e ver seu progresso.\n\n' +
+          '──────────────────────────\n\n' +
+          '🇺🇸 **English:**\n' +
+          'Invite **5 friends** to the server using your exclusive link and get a **FREE 2-day Key!**\n' +
+          'Use the `/mylink` command to get your personal invite link and check your progress.'
+        )
+        .setColor(0x00FF87)
+        .addFields(
+          { name: '🇧🇷 Como funciona?', value: '1. Use `/meulink` para gerar seu link\n2. Compartilhe com seus amigos\n3. Quando 5 entrarem, você recebe a key automaticamente por DM!', inline: true },
+          { name: '🇺🇸 How it works?', value: '1. Use `/mylink` to generate your link\n2. Share it with your friends\n3. When 5 join, you receive the key automatically via DM!', inline: true }
+        )
+        .setFooter({ text: 'Guto Pingo Referral System • Powered by Discord.js & Supabase' })
+        .setTimestamp();
+
+      await announcementsChannel.send({
+        content: '@everyone',
+        embeds: [referralEmbed]
+      });
+      console.log('[Announcements] Anúncio do sistema de indicação enviado com @everyone.');
+    }
+  } catch (err) {
+    console.error('[Announcements] Erro ao configurar canal de anúncios:', err);
   }
 }
 
@@ -636,15 +765,29 @@ client.once('ready', async () => {
           {
             name: 'reset-trials',
             description: 'Reseta o resgate de chaves de teste para todos os usuários (Admin apenas)'
+          },
+          {
+            name: 'meulink',
+            description: '🔗 Pega seu link exclusivo de indicação e vê seu progresso (BR)'
+          },
+          {
+            name: 'mylink',
+            description: '🔗 Get your exclusive referral invite link and check progress (EN)'
           }
         ]);
-        console.log(`[Bot] Comandos /setup-support, /setup-shop e /reset-trials registrados com sucesso no servidor: ${guild.name}`);
+        console.log(`[Bot] Comandos registrados com sucesso no servidor: ${guild.name}`);
         
         // Configurar e atribuir cargos
         await setupServerRoles();
 
         // Configurar / Atualizar o contador de membros no topo
         await updateMemberCounter(guild);
+
+        // Cachear convites existentes para o sistema de indicação
+        await cacheGuildInvites(guild);
+
+        // Criar canal de anúncios e postar sistema de indicação
+        await setupAnnouncementsAndReferral(guild);
 
         // 1. Verificar/criar canal de vendas "shop"
         try {
@@ -820,6 +963,92 @@ client.on('guildMemberAdd', async (member) => {
 
     // Atualizar o contador de membros
     await updateMemberCounter(guild);
+
+    // ===== SISTEMA DE INDICAÇÃO: detectar qual invite foi usado =====
+    if (!member.user.bot) {
+      try {
+        const newInvites = await guild.invites.fetch();
+        let usedCode = null;
+
+        // Compara o cache antigo com os novos usos
+        newInvites.forEach(inv => {
+          const cachedUses = inviteCache.get(inv.code);
+          if (cachedUses !== undefined && inv.uses > cachedUses) {
+            usedCode = inv.code;
+          }
+        });
+
+        // Atualiza o cache com os valores novos
+        newInvites.forEach(inv => inviteCache.set(inv.code, inv.uses));
+
+        if (usedCode) {
+          console.log(`[Referral] ${member.user.tag} entrou via invite code: ${usedCode}`);
+
+          const { data: inviteRow } = await supabase
+            .from('invite_tracking')
+            .select('*')
+            .eq('invite_code', usedCode)
+            .maybeSingle();
+
+          if (inviteRow && !inviteRow.rewarded) {
+            const newCount = (inviteRow.uses_count || 0) + 1;
+
+            await supabase
+              .from('invite_tracking')
+              .update({ uses_count: newCount })
+              .eq('invite_code', usedCode);
+
+            console.log(`[Referral] ${inviteRow.discord_username} agora tem ${newCount}/5 indicações.`);
+
+            if (newCount >= 5) {
+              // Gera a key de 2 dias
+              const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+              const seg = () => Array.from({ length: 6 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+              const rewardKey = `GUTO-2DAYS-${seg()}`;
+
+              // Insere na tabela de licenças
+              await supabase.from(SUPABASE_TABLE).insert([{ [COL_KEY]: rewardKey, status: 'active', max_devices: 1 }]);
+
+              // Marca como recompensado
+              await supabase
+                .from('invite_tracking')
+                .update({ rewarded: true, reward_key: rewardKey })
+                .eq('invite_code', usedCode);
+
+              console.log(`[Referral] 🎁 ${inviteRow.discord_username} ganhou a key de recompensa: ${rewardKey}`);
+
+              // Envia DM para o dono do invite
+              try {
+                const inviter = await client.users.fetch(inviteRow.discord_id);
+                const rewardEmbed = new EmbedBuilder()
+                  .setTitle('🎁 Parabéns! Você ganhou uma Key de 2 dias! / Congratulations!')
+                  .setDescription(
+                    `🇧🇷 Você convidou **5 amigos** para o servidor e ganhou sua recompensa!\n\n` +
+                    `🇺🇸 You invited **5 friends** to the server and earned your reward!`
+                  )
+                  .setColor(0x00FF87)
+                  .addFields(
+                    { name: '🔑 Sua Chave / Your Key', value: `\`\`\`${rewardKey}\`\`\`` },
+                    { name: '⏰ Validade / Validity', value: '2 Dias / 2 Days', inline: true },
+                    { name: '📦 Plano / Plan', value: '2 Days (Referral Reward)', inline: true }
+                  )
+                  .setFooter({ text: 'Guto Pingo Referral System • Obrigado por indicar amigos!' })
+                  .setTimestamp();
+
+                await inviter.send({ embeds: [rewardEmbed] });
+                console.log(`[Referral] DM de recompensa enviada para ${inviteRow.discord_username}.`);
+              } catch (dmErr) {
+                console.warn(`[Referral] Não foi possível enviar DM de recompensa:`, dmErr.message);
+              }
+            }
+          }
+        }
+      } catch (invErr) {
+        console.error('[Referral] Erro ao rastrear convite:', invErr.message);
+      }
+    }
+    // ===== FIM DO SISTEMA DE INDICAÇÃO =====
+
   } catch (err) {
     console.error(`[Roles/Counter] Erro no evento guildMemberAdd para ${member.user.tag}:`, err);
   }
@@ -1205,6 +1434,57 @@ client.on('interactionCreate', async (interaction) => {
         console.error('[Bot] Erro ao executar reset-trials:', err);
         await interaction.editReply({
           content: '❌ Ocorreu um erro ao tentar resetar as chaves no banco de dados.'
+        });
+      }
+    } else if (interaction.commandName === 'meulink' || interaction.commandName === 'mylink') {
+      // ===== COMANDO DE INDICAÇÃO =====
+      const lang = interaction.commandName === 'meulink' ? 'pt' : 'en';
+      await interaction.deferReply({ ephemeral: true });
+
+      try {
+        const guild = interaction.guild;
+        const discordId = interaction.user.id;
+        const username = interaction.user.username;
+
+        const row = await getUserInviteRow(guild, discordId, username);
+
+        if (!row) {
+          return interaction.editReply({
+            content: lang === 'pt'
+              ? '❌ Ocorreu um erro ao gerar seu link. Tente novamente mais tarde.'
+              : '❌ An error occurred while generating your link. Please try again later.'
+          });
+        }
+
+        const inviteUrl = `https://discord.gg/${row.invite_code}`;
+        const count = row.uses_count || 0;
+        const remaining = Math.max(0, 5 - count);
+        const progressBar = '🟢'.repeat(count) + '⚫'.repeat(Math.max(0, 5 - count));
+
+        const embed = new EmbedBuilder()
+          .setTitle(lang === 'pt' ? '🔗 Seu Link de Indicação' : '🔗 Your Referral Link')
+          .setDescription(
+            lang === 'pt'
+              ? `Compartilhe este link com seus amigos!\nQuando **5 pessoas** entrarem pelo seu link, você ganha uma **Key de 2 dias grátis**!`
+              : `Share this link with your friends!\nWhen **5 people** join through your link, you get a **free 2-day Key**!`
+          )
+          .setColor(row.rewarded ? 0xF1C40F : 0x5865F2)
+          .addFields(
+            { name: lang === 'pt' ? '🔗 Seu Link' : '🔗 Your Link', value: `**${inviteUrl}**` },
+            { name: lang === 'pt' ? '📊 Progresso' : '📊 Progress', value: `${progressBar} **${count}/5**`, inline: true },
+            { name: lang === 'pt' ? '👥 Faltam' : '👥 Remaining', value: `**${remaining}** ${lang === 'pt' ? 'amigos' : 'friends'}`, inline: true },
+            { name: lang === 'pt' ? '🎁 Status da Recompensa' : '🎁 Reward Status', value: row.rewarded ? (lang === 'pt' ? '✅ Já resgatado!' : '✅ Already claimed!') : (lang === 'pt' ? '⏳ Aguardando...' : '⏳ Waiting...'), inline: true }
+          )
+          .setFooter({ text: lang === 'pt' ? 'Guto Pingo • Indique e ganhe!' : 'Guto Pingo • Refer and earn!' })
+          .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+      } catch (err) {
+        console.error('[Referral] Erro no comando meulink/mylink:', err);
+        await interaction.editReply({
+          content: lang === 'pt'
+            ? '❌ Ocorreu um erro ao buscar seu link. Tente novamente.'
+            : '❌ An error occurred while fetching your link. Please try again.'
         });
       }
     }
