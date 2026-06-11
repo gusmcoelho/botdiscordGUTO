@@ -663,7 +663,7 @@ async function pollPendingOrders() {
           const genSegment = () => Array.from({ length: 4 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
           const licenseKey = `GUTO-${genSegment()}-${genSegment()}-${genSegment()}`;
 
-          // Atualizar a linha no banco de dados
+          // Atualizar a linha no banco de dados (bot_orders)
           const { data: updatedOrder, error: updateError } = await supabase
             .from('bot_orders')
             .update({
@@ -678,6 +678,34 @@ async function pollPendingOrders() {
           if (updateError) {
             console.error(`[Polling] Erro ao atualizar ordem ${orderId} para paid:`, updateError);
             continue;
+          }
+
+          // ✅ INSERIR A KEY NA TABELA DE LICENÇAS (licenses)
+          // Calcula expiração com base no plano
+          const planId = updatedOrder.plan_id;
+          let expiresAt = null; // null = vitalício (lifetime)
+          if (planId === '30min')  expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+          if (planId === '4days')  expiresAt = new Date(Date.now() + 4  * 24 * 60 * 60 * 1000).toISOString();
+          if (planId === '1week')  expiresAt = new Date(Date.now() + 7  * 24 * 60 * 60 * 1000).toISOString();
+          if (planId === '30days') expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          // 'lifetime' fica com expiresAt = null
+
+          const licenseInsertPayload = {
+            [COL_KEY]: licenseKey,
+            status: 'active',
+            max_devices: 1
+          };
+          if (expiresAt) licenseInsertPayload[COL_EXPIRATION] = expiresAt;
+
+          const { error: licenseInsertError } = await supabase
+            .from(SUPABASE_TABLE)
+            .insert([licenseInsertPayload]);
+
+          if (licenseInsertError) {
+            console.error(`[Polling] ⚠️ ERRO CRÍTICO: Falha ao inserir key "${licenseKey}" na tabela "${SUPABASE_TABLE}":`, licenseInsertError);
+            // Não interrompe - entrega a key mesmo assim mas loga o erro
+          } else {
+            console.log(`[Polling] ✅ Key "${licenseKey}" (plano: ${planId}) inserida com sucesso na tabela "${SUPABASE_TABLE}".`);
           }
 
           // Obter idioma da memória ou padrão para 'pt'
